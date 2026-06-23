@@ -24,7 +24,8 @@ export class Renderer {
   }
 
   resize(): void {
-    const margin = 24;
+    // Smaller breathing room on phone-sized viewports so the map isn't tiny.
+    const margin = Math.min(window.innerWidth, window.innerHeight) < 600 ? 4 : 24;
     const availW = window.innerWidth - margin;
     const availH = window.innerHeight - margin;
     // Prefer integer scaling for the crispest pixels; fall back to fractional.
@@ -41,12 +42,18 @@ export class Renderer {
     this.offsetY = rect.top;
   }
 
-  // Convert a client (mouse) coordinate into a virtual coordinate.
+  // Convert a client (mouse/touch) coordinate into a virtual coordinate.
+  // Derive the scale from the canvas's actual rendered size rather than the
+  // stored `scale`: CSS `max-width/height: 100%` can shrink the canvas below
+  // the requested size on small/portrait screens, and using the real rect
+  // keeps taps aligned in that case.
   toVirtual(clientX: number, clientY: number): { x: number; y: number } {
     const rect = this.canvas.getBoundingClientRect();
+    const sx = rect.width > 0 ? VW / rect.width : 1;
+    const sy = rect.height > 0 ? VH / rect.height : 1;
     return {
-      x: (clientX - rect.left) / this.scale,
-      y: (clientY - rect.top) / this.scale,
+      x: (clientX - rect.left) * sx,
+      y: (clientY - rect.top) * sy,
     };
   }
 

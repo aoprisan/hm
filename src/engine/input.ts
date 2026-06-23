@@ -35,6 +35,45 @@ export class Input {
       const v = renderer.toVirtual(e.clientX, e.clientY);
       this.clickQueue.push({ x: v.x, y: v.y, button: 2 });
     });
+
+    // Touch: map taps to left-clicks and keep the pointer (hover) in sync.
+    // preventDefault stops the browser synthesizing duplicate mouse/click
+    // events and suppresses scrolling / double-tap zoom on the canvas.
+    const trackTouch = (t: Touch) => {
+      const v = renderer.toVirtual(t.clientX, t.clientY);
+      this.pointer.x = v.x;
+      this.pointer.y = v.y;
+    };
+    canvas.addEventListener(
+      "touchstart",
+      (e) => {
+        if (e.touches.length) trackTouch(e.touches[0]);
+        this.pointer.down = true;
+        e.preventDefault();
+      },
+      { passive: false },
+    );
+    canvas.addEventListener(
+      "touchmove",
+      (e) => {
+        if (e.touches.length) trackTouch(e.touches[0]);
+        e.preventDefault();
+      },
+      { passive: false },
+    );
+    canvas.addEventListener(
+      "touchend",
+      (e) => {
+        if (e.changedTouches.length) trackTouch(e.changedTouches[0]);
+        this.pointer.down = false;
+        this.clickQueue.push({ x: this.pointer.x, y: this.pointer.y, button: 0 });
+        e.preventDefault();
+      },
+      { passive: false },
+    );
+    canvas.addEventListener("touchcancel", () => {
+      this.pointer.down = false;
+    });
     window.addEventListener("keydown", (e) => {
       if (!this.keysDown.has(e.key)) this.keyQueue.push(e.key);
       this.keysDown.add(e.key);
