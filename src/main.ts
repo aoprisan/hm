@@ -3,8 +3,11 @@ import { Renderer } from "./engine/renderer";
 import { Input } from "./engine/input";
 import { startLoop } from "./engine/loop";
 import { App } from "./app";
+import { registerPWA } from "./pwa";
 
 function boot(): void {
+  registerPWA();
+
   const canvas = document.getElementById("game") as HTMLCanvasElement;
   const renderer = new Renderer(canvas);
   const input = new Input(renderer);
