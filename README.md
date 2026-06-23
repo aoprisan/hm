@@ -1,0 +1,82 @@
+# Realms of Valor
+
+A fairy-tale, turn-based strategy game inspired by **Heroes of Might & Magic II**,
+built from scratch in **TypeScript + HTML5 Canvas** with original pixel art.
+Explore an adventure map with your hero, gather resources, build and recruit in
+your Knight castle, fight tactical battles, and storm the Dragon's Keep.
+
+> All graphics are original pixel art drawn procedurally in a HOMM2-like
+> storybook style. No copyrighted assets are used.
+
+![scope](https://img.shields.io/badge/scope-1%20castle%20%2B%201%20map-gold)
+
+## Running
+
+```bash
+npm install
+npm run dev        # start the dev server, then open the printed URL
+```
+
+Other scripts:
+
+```bash
+npm run build      # type-check + production bundle into dist/
+npm run preview    # serve the production build
+npm run typecheck  # strict TypeScript check
+```
+
+## How to play
+
+### Adventure map
+- **Click a tile** to send your hero there. A green dotted path shows the route
+  you can reach this turn; orange dots are beyond your remaining movement.
+- Walk over **resource piles** and **treasure chests** to collect them.
+- Step onto a **mine** or **monster** to fight its guards; winning captures the
+  mine (daily income) or clears the path.
+- Step onto your **castle** (or use *Visit Castle* when adjacent) to open the
+  town screen.
+- **End Turn** (button or `Enter`) advances the day: you collect income from your
+  town and captured mines, and every new week brings fresh recruits.
+- The right panel shows your hero, army, movement, and a **minimap** with fog of
+  war that clears as you explore.
+
+### Castle (Knight town)
+- Click a dimmed building plot to **build** it (one building per day). Prerequisites
+  and costs are shown.
+- Click a built **dwelling** to **recruit** creatures into your hero's army:
+  Peasant → Archer → Pikeman → Swordsman → Cavalry → Paladin.
+- The **Marketplace** lets you trade surplus resources for gold; the **Well**,
+  **Statue**, and **Castle** boost growth and income.
+
+### Battle (tactical)
+- Stacks act in order of **speed**. On your turn, click a glowing tile to **move**
+  or an enemy to **attack** (melee units must reach an adjacent tile; the **Archer**
+  shoots at range while no enemy is adjacent).
+- Melee attacks provoke one **retaliation** per round.
+- **Defend** skips a turn, **Auto Battle** resolves the rest instantly, **Flee**
+  retreats (and loses the engagement).
+
+### Goal
+Defeat the **Dragon's Keep** in the northeast to win. If your hero's entire army
+is destroyed, the quest is lost — start a **New Quest** to try again.
+
+## Project structure
+
+```
+src/
+  engine/    renderer (virtual resolution + camera), input, loop, scene manager, audio
+  art/       palette + PixelSprite primitive; terrain, object, creature, town & UI sprites
+  data/      resources, terrain, Knight creatures, castle build tree, the handcrafted map
+  game/      state, hero, army, pathfinding (A*), fog of war, economy, combat model, RNG
+  scenes/    AdventureScene, TownScene, BattleScene
+  ui/        HUD, side panel (with minimap), reusable widgets (panels/buttons/text)
+  main.ts    bootstrap
+```
+
+## Design notes
+- **Rendering:** a fixed 1024×640 virtual canvas scaled to the window with
+  nearest-neighbor for crisp pixels. Every visual is a baked offscreen canvas.
+- **Combat** is "simplified tactical": grid movement + melee/ranged + retaliation,
+  with HOMM2-style damage (`count × dmg × attack/defense multiplier`). No spells,
+  morale, or luck.
+- **Faction:** the Knight ("Castle") town and its six-tier lineup.

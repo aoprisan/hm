@@ -1,0 +1,16 @@
+{
+  "name": "homm2-clone",
+  "version": "1.0.0",
+  "description": "A fairy-tale Heroes of Might & Magic II style game — Knight castle + one adventure map. TypeScript + HTML5 Canvas.",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview --host",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.4",
+    "vite": "^5.4.0"
+  }
+}
