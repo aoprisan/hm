@@ -68,7 +68,7 @@ export const SHARED_BUILDINGS: Record<SharedBuildingId, Building> = {
   },
   castle: {
     id: "castle", name: "Castle", desc: "Mighty fortifications. Boosts creature growth.",
-    cost: bag({ gold: 5000, wood: 20, ore: 20 }), prereq: ["townHall"], growthBonus: 1, anchor: { x: 470, y: 120 },
+    cost: bag({ gold: 5000, wood: 20, ore: 20 }), prereq: ["townHall"], growthBonus: 1, anchor: { x: 472, y: 188 },
   },
 };
 

@@ -41,41 +41,114 @@ export function townBackground(w: number, h: number, faction: FactionId): HTMLCa
   if (hit) return hit;
   const pal = FACTIONS[faction].palette;
   const { cv, c } = mk(w, h);
+  const dark = faction === "warlock" || faction === "necropolis";
+
   // sky gradient
-  const g = c.createLinearGradient(0, 0, 0, h * 0.6);
+  const horizon = h * 0.40;
+  const g = c.createLinearGradient(0, 0, 0, horizon);
   g.addColorStop(0, pal.sky[0]);
   g.addColorStop(1, pal.sky[1]);
   c.fillStyle = g;
-  c.fillRect(0, 0, w, h * 0.62);
-  // soft sun / moon
-  c.fillStyle = "rgba(255,240,176,0.7)";
-  c.beginPath(); c.arc(w - 140, 90, 46, 0, Math.PI * 2); c.fill();
-  // distant mountains
+  c.fillRect(0, 0, w, Math.ceil(horizon) + 2);
+
+  // soft sun / moon with a halo
+  const lum = dark ? "rgba(225,225,245,0.85)" : "rgba(255,240,176,0.9)";
+  c.fillStyle = dark ? "rgba(200,200,235,0.10)" : "rgba(255,240,176,0.18)";
+  c.beginPath(); c.arc(w - 150, 88, 76, 0, Math.PI * 2); c.fill();
+  c.fillStyle = lum;
+  c.beginPath(); c.arc(w - 150, 88, 44, 0, Math.PI * 2); c.fill();
+
+  // drifting clouds (or eerie wisps for dark factions)
+  const cloud = dark ? "rgba(180,180,200,0.16)" : "rgba(255,255,255,0.55)";
+  for (const [cx, cy, s] of [[w * 0.18, h * 0.14, 1.1], [w * 0.62, h * 0.1, 0.8], [w * 0.84, h * 0.22, 0.9]] as const) {
+    c.fillStyle = cloud;
+    for (const [dx, dy, rr] of [[-34, 6, 20], [-8, -4, 26], [22, 6, 22], [50, 8, 16]] as const) {
+      c.beginPath(); c.ellipse(cx + dx * s, cy + dy * s, rr * s, rr * 0.7 * s, 0, 0, Math.PI * 2); c.fill();
+    }
+  }
+
+  // two layers of distant mountains
   for (let i = 0; i < 6; i++) {
     const mx = i * (w / 5);
-    tri(c, mx - 120, h * 0.45, mx, h * 0.18 + (i % 2) * 30, mx + 120, h * 0.45, shade(pal.mountain, 0.18));
+    tri(c, mx - 130, horizon + 4, mx, h * 0.16 + (i % 2) * 30, mx + 130, horizon + 4, shade(pal.mountain, 0.2));
   }
   for (let i = 0; i < 5; i++) {
     const mx = i * (w / 4) + 60;
-    tri(c, mx - 140, h * 0.5, mx, h * 0.26 + (i % 2) * 20, mx + 140, h * 0.5, pal.mountain);
+    tri(c, mx - 150, horizon + 8, mx, h * 0.24 + (i % 2) * 22, mx + 150, horizon + 8, pal.mountain);
   }
-  // grassy ground
-  r(c, 0, Math.floor(h * 0.45), w, h, pal.ground);
-  c.fillStyle = pal.groundDetail;
-  for (let i = 0; i < 1400; i++) {
-    const x = Math.random() * w;
-    const y = h * 0.46 + Math.random() * (h * 0.54);
-    c.fillRect(x | 0, y | 0, 2, 1);
+
+  // rolling meadow with a soft front-to-back gradient (lighter near the back)
+  const gg = c.createLinearGradient(0, horizon - 10, 0, h);
+  gg.addColorStop(0, shade(pal.ground, 0.14));
+  gg.addColorStop(0.5, pal.ground);
+  gg.addColorStop(1, shade(pal.ground, -0.12));
+  c.fillStyle = gg;
+  c.fillRect(0, Math.floor(horizon - 10), w, h);
+
+  // gentle rolling rises along the horizon for depth
+  c.fillStyle = shade(pal.ground, 0.08);
+  for (const [hx, hw2] of [[w * 0.22, w * 0.5], [w * 0.78, w * 0.55]] as const) {
+    c.beginPath();
+    c.ellipse(hx, horizon + 18, hw2, h * 0.12, 0, Math.PI, Math.PI * 2);
+    c.fill();
   }
-  // a winding road
-  c.fillStyle = pal.road;
+
+  // the grand castle motte: a rounded hill the keep sits upon (centered on the
+  // castle anchor at design 472/1024, base near design 188/524).
+  const mcx = w * (472 / 1024);
+  const mTop = h * (178 / 524);
+  const mW = w * 0.34;
+  c.fillStyle = shade(pal.ground, -0.06);
   c.beginPath();
-  c.moveTo(w * 0.5 - 60, h);
-  c.bezierCurveTo(w * 0.5 - 10, h * 0.8, w * 0.5 + 40, h * 0.7, w * 0.5, h * 0.5);
-  c.lineTo(w * 0.5 + 70, h * 0.5);
-  c.bezierCurveTo(w * 0.5 + 60, h * 0.72, w * 0.5 + 130, h * 0.85, w * 0.5 + 120, h);
+  c.moveTo(mcx - mW, h);
+  c.bezierCurveTo(mcx - mW * 0.7, mTop + h * 0.18, mcx - mW * 0.34, mTop, mcx, mTop);
+  c.bezierCurveTo(mcx + mW * 0.34, mTop, mcx + mW * 0.7, mTop + h * 0.18, mcx + mW, h);
   c.closePath();
   c.fill();
+  // sunlit left flank of the motte
+  c.fillStyle = shade(pal.ground, 0.10);
+  c.beginPath();
+  c.moveTo(mcx - mW, h);
+  c.bezierCurveTo(mcx - mW * 0.7, mTop + h * 0.18, mcx - mW * 0.34, mTop, mcx, mTop);
+  c.lineTo(mcx, h);
+  c.closePath();
+  c.fill();
+
+  // ground speckle
+  c.fillStyle = pal.groundDetail;
+  for (let i = 0; i < 1600; i++) {
+    const x = Math.random() * w;
+    const y = horizon + Math.random() * (h - horizon);
+    c.fillRect(x | 0, y | 0, 2, 1);
+  }
+
+  // a winding road climbing the motte to the castle gate
+  c.fillStyle = pal.road;
+  c.beginPath();
+  c.moveTo(w * 0.5 - 64, h);
+  c.bezierCurveTo(w * 0.5 - 6, h * 0.82, mcx - 46, h * 0.6, mcx - 30, mTop + h * 0.06);
+  c.lineTo(mcx + 30, mTop + h * 0.06);
+  c.bezierCurveTo(mcx + 50, h * 0.62, w * 0.5 + 70, h * 0.84, w * 0.5 + 116, h);
+  c.closePath();
+  c.fill();
+  // road edge highlight
+  c.strokeStyle = shade(pal.road, 0.18);
+  c.lineWidth = 2;
+  c.stroke();
+
+  // scattered flower tufts on the meadow (skip the gloomy factions)
+  if (!dark) {
+    const petals = ["#f2e4c0", "#f2c44d", "#e88aa0", "#a9d8f0"];
+    for (let i = 0; i < 70; i++) {
+      const x = Math.random() * w;
+      const y = horizon + 20 + Math.random() * (h - horizon - 24);
+      c.fillStyle = petals[(Math.random() * petals.length) | 0];
+      c.fillRect(x | 0, y | 0, 2, 2);
+      c.fillStyle = shade(pal.groundDetail, -0.1);
+      c.fillRect(x | 0, (y + 2) | 0, 1, 2);
+    }
+  }
+
   bgCache.set(key, cv);
   return cv;
 }
@@ -87,17 +160,19 @@ const bcache = new Map<string, HTMLCanvasElement>();
 
 export function buildingArt(id: BuildingId, faction: FactionId): HTMLCanvasElement {
   const slot = DWELLING_IDS.indexOf(id as never);
-  const key = slot >= 0 ? `${faction}:${id}` : `shared:${id}`;
+  // The castle is faction-tinted (its roofs/banners match the town), so it is
+  // cached per faction; the other shared buildings are faction-agnostic.
+  const key = slot >= 0 ? `${faction}:${id}` : id === "castle" ? `castle:${faction}` : `shared:${id}`;
   const hit = bcache.get(key);
   if (hit) return hit;
-  const out = slot >= 0 ? dwellingArt(faction, slot) : sharedBuildingArt(id);
+  const out = slot >= 0 ? dwellingArt(faction, slot) : sharedBuildingArt(id, faction);
   bcache.set(key, out);
   return out;
 }
 
-function sharedBuildingArt(id: BuildingId): HTMLCanvasElement {
+function sharedBuildingArt(id: BuildingId, faction: FactionId): HTMLCanvasElement {
   switch (id) {
-    case "castle": return drawCastleWall();
+    case "castle": return drawCastle(faction);
     case "townHall": return drawTownHall();
     case "statue": return drawStatue();
     case "well": return drawWell();
@@ -131,25 +206,79 @@ function shadow(c: CanvasRenderingContext2D, cx: number, by: number, rw: number)
   c.beginPath(); c.ellipse(cx, by, rw, 7, 0, 0, Math.PI * 2); c.fill();
 }
 
-function drawCastleWall(): HTMLCanvasElement {
-  const { cv, c } = mk(220, 150);
-  shadow(c, 110, 146, 100);
-  const stone = "#b8b0a2", dk = "#7d756a", lt = "#cfc7b8";
-  r(c, 20, 60, 180, 84, stone);
-  r(c, 20, 60, 180, 8, lt);
-  for (let i = 0; i < 11; i++) r(c, 20 + i * 17, 52, 11, 10, stone);
-  r(c, 92, 96, 36, 48, "#3a2410");
-  c.fillStyle = "#5b3a1a";
-  c.beginPath(); c.arc(110, 96, 18, Math.PI, 0); c.fill();
-  r(c, 92, 96, 36, 48, "rgba(0,0,0,0)");
-  // towers
-  for (const tx of [4, 184]) {
-    r(c, tx, 30, 34, 114, stone);
-    r(c, tx, 30, 6, 114, lt);
-    r(c, tx + 28, 30, 6, 114, dk);
-    for (let i = 0; i < 3; i++) r(c, tx + i * 12, 22, 8, 10, stone);
-    tri(c, tx + 17, 0, tx + 40, 26, tx - 6, 26, "#28548f");
-    r(c, tx + 14, 60, 6, 12, "#1c1610");
+// A grand, faction-tinted hilltop keep: a crenellated curtain wall with a
+// gatehouse and portcullis, two flanking conical-roofed towers, and a tall
+// central keep flying the town's banner. Drawn with its base at the canvas
+// bottom so it rests on the motte painted into the background.
+function drawCastle(faction: FactionId): HTMLCanvasElement {
+  const pal = FACTIONS[faction].palette;
+  const roof = pal.roofPrimary, flag = pal.banner;
+  const stone = "#bcb4a6", dk = "#857c70", lt = "#d6cebe", glow = "#ffd98a";
+  const { cv, c } = mk(236, 168);
+  shadow(c, 118, 162, 110);
+
+  // crenellated parapet helper
+  const crenel = (x: number, y: number, wdt: number, merlon = 11, gap = 7) => {
+    let cx = x;
+    while (cx < x + wdt) { r(c, cx, y, Math.min(merlon, x + wdt - cx), 9, stone); cx += merlon + gap; }
+  };
+
+  // ---- central keep (rises behind the wall) ----
+  const kx = 92, kw = 52, kTop = 26;
+  r(c, kx, kTop, kw, 60, stone);
+  r(c, kx, kTop, 7, 60, lt);
+  r(c, kx + kw - 7, kTop, 7, 60, dk);
+  crenel(kx - 2, kTop - 8, kw + 4);
+  r(c, kx + 18, kTop + 18, 14, 22, "#241a10"); // tall arched window
+  c.fillStyle = "#3a2a14"; c.beginPath(); c.arc(kx + 25, kTop + 18, 7, Math.PI, 0); c.fill();
+  r(c, kx + 21, kTop + 22, 8, 12, glow);
+  // keep banner on a pole
+  r(c, kx + kw / 2 - 1, 2, 3, kTop - 2, "#5b3a1a");
+  c.fillStyle = flag;
+  c.beginPath(); c.moveTo(kx + kw / 2 + 2, 4); c.lineTo(kx + kw / 2 + 26, 11); c.lineTo(kx + kw / 2 + 2, 18); c.closePath(); c.fill();
+
+  // ---- curtain wall ----
+  const wy = 78;
+  r(c, 30, wy, 176, 84, stone);
+  r(c, 30, wy, 176, 7, lt);
+  r(c, 30, wy + 78, 176, 6, dk);
+  crenel(30, wy - 8, 176);
+  // faint ashlar courses
+  c.fillStyle = "rgba(90,80,66,0.25)";
+  for (let y = wy + 18; y < wy + 78; y += 16) r(c, 34, y, 168, 1, "rgba(90,80,66,0.25)");
+
+  // ---- gatehouse ----
+  const gx = 96, gw = 44;
+  r(c, gx, wy - 6, gw, 90, shade(stone, -0.06));
+  r(c, gx, wy - 6, 6, 90, lt);
+  crenel(gx - 1, wy - 16, gw + 2, 10, 6);
+  // arched gate with portcullis + warm torchlight
+  c.fillStyle = "#2a1d10";
+  c.beginPath();
+  c.moveTo(gx + 8, wy + 84); c.lineTo(gx + 8, wy + 40);
+  c.arc(gx + gw / 2, wy + 40, gw / 2 - 8, Math.PI, 0);
+  c.lineTo(gx + gw - 8, wy + 84); c.closePath(); c.fill();
+  c.strokeStyle = "#6a5a44"; c.lineWidth = 1.5;
+  for (let i = 1; i < 4; i++) { c.beginPath(); c.moveTo(gx + 8 + i * 7, wy + 40); c.lineTo(gx + 8 + i * 7, wy + 84); c.stroke(); }
+  for (let i = 1; i < 3; i++) { c.beginPath(); c.moveTo(gx + 8, wy + 48 + i * 12); c.lineTo(gx + gw - 8, wy + 48 + i * 12); c.stroke(); }
+  r(c, gx + gw / 2 - 8, wy + 70, 16, 14, glow); // lit doorway
+
+  // ---- flanking towers with conical roofs ----
+  for (const tx of [6, 188]) {
+    r(c, tx, 50, 42, 112, stone);
+    r(c, tx, 50, 7, 112, lt);
+    r(c, tx + 35, 50, 7, 112, dk);
+    crenel(tx - 1, 42, 44, 10, 7);
+    // conical roof
+    tri(c, tx + 21, 8, tx + 48, 50, tx - 6, 50, roof);
+    tri(c, tx + 21, 8, tx + 48, 50, tx + 21, 50, shade(roof, -0.18));
+    // finial pennant
+    r(c, tx + 20, 0, 2, 10, "#5b3a1a");
+    c.fillStyle = flag;
+    c.beginPath(); c.moveTo(tx + 22, 1); c.lineTo(tx + 38, 6); c.lineTo(tx + 22, 11); c.closePath(); c.fill();
+    // windows
+    r(c, tx + 16, 72, 10, 14, "#241a10"); r(c, tx + 18, 76, 6, 8, glow);
+    r(c, tx + 16, 104, 10, 14, "#241a10"); r(c, tx + 18, 108, 6, 8, glow);
   }
   return cv;
 }

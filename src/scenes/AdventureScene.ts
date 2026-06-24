@@ -479,16 +479,17 @@ export class AdventureScene implements Scene {
 
   private drawHero(ctx: CanvasRenderingContext2D): void {
     const h = this.state.hero;
+    const spr = heroSprite(this.state.town.faction);
     const cx = h.fx * TILE - this.camX + TILE / 2;
     const bottom = h.fy * TILE - this.camY + TILE - 2;
     const scale = 2;
-    const w = heroSprite.w * scale;
+    const w = spr.w * scale;
     ctx.fillStyle = "rgba(0,0,0,0.25)";
     ctx.beginPath();
     ctx.ellipse(cx, bottom - 2, 12, 4, 0, 0, Math.PI * 2);
     ctx.fill();
-    if (h.facing === 1) heroSprite.draw(ctx, Math.round(cx - w / 2), Math.round(bottom - heroSprite.h * scale), scale);
-    else heroSprite.drawFlipped(ctx, Math.round(cx - w / 2), Math.round(bottom - heroSprite.h * scale), scale);
+    if (h.facing === 1) spr.draw(ctx, Math.round(cx - w / 2), Math.round(bottom - spr.h * scale), scale);
+    else spr.drawFlipped(ctx, Math.round(cx - w / 2), Math.round(bottom - spr.h * scale), scale);
   }
 
   private drawPreview(ctx: CanvasRenderingContext2D): void {
@@ -580,7 +581,7 @@ export class AdventureScene implements Scene {
     const h0 = this.state.hero;
     // hero card
     parchment(ctx, pad, y + 18, Math.min(360, L.vw - pad * 2), 86);
-    heroSprite.draw(ctx, pad + 10, y + 28, 4);
+    heroSprite(this.state.town.faction).draw(ctx, pad + 10, y + 28, 4);
     textShadow(ctx, h0.name, pad + 74, y + 40, "#3a2410", "bold 17px 'Trebuchet MS'");
     text(ctx, `Level ${h0.level}    Atk ${h0.attack}   Def ${h0.defense}`, pad + 74, y + 62, "#5b3a1a", "13px 'Trebuchet MS'");
     const mvFrac = h0.movePoints / h0.maxMovePoints;
