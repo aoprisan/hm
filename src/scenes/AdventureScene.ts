@@ -243,6 +243,7 @@ export class AdventureScene implements Scene {
     this.moving = false;
     this.clearPending();
     this.centerOnHero(true);
+    this.app.save();
   }
 
   private flash(msg: string): void { this.modal = { title: "", body: msg }; }
@@ -277,6 +278,8 @@ export class AdventureScene implements Scene {
       const stop = this.arriveAt(h.x, h.y, fromX, fromY);
       if (!stop && h.path.length && h.movePoints > 0) this.startNextStep();
       else { h.path = []; this.previewPath = null; }
+      // Persist progress (fog reveal, pickups, captures) once the march pauses.
+      if (!this.moving) this.app.save();
     } else {
       h.fx = this.stepFrom.x + (this.stepTo.x - this.stepFrom.x) * this.stepT;
       h.fy = this.stepFrom.y + (this.stepTo.y - this.stepFrom.y) * this.stepT;
@@ -383,6 +386,7 @@ export class AdventureScene implements Scene {
           }
         }
         cb(outcome.playerWon);
+        this.app.save();
         this.app.toAdventure();
       },
     );

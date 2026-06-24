@@ -5,6 +5,7 @@ import { Renderer } from "./engine/renderer";
 import { Input } from "./engine/input";
 import { SceneManager } from "./engine/scene";
 import { GameState } from "./game/state";
+import { saveGame, loadSave, deserialize, clearSave } from "./game/persist";
 import { Hero } from "./game/hero";
 import { Stack } from "./game/army";
 import { buildMap1 } from "./data/map1";
@@ -42,7 +43,24 @@ export class App {
     const hero = new Hero(f.heroName, startX, startY, startArmy, 2, 2);
     this.state = new GameState(map, hero, town);
     this.state.pushLog(`${f.heroName} sets out from ${town.name}.`);
+    this.save();
     this.scenes.replace(new AdventureScene(this));
+  }
+
+  // Resume a saved run. Falls back to the menu if the save is missing/corrupt.
+  continueGame(): void {
+    const d = loadSave();
+    if (!d) { this.toMenu(); return; }
+    this.state = deserialize(d);
+    this.scenes.replace(new AdventureScene(this));
+  }
+
+  // Persist the current run. A finished game clears the save so it isn't
+  // resumed; an in-progress one is written to localStorage.
+  save(): void {
+    if (!this.state) return;
+    if (this.state.phase === "playing") saveGame(this.state);
+    else clearSave();
   }
 
   toAdventure(): void {

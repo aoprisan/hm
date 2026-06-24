@@ -152,7 +152,7 @@ export class TownScene implements Scene {
       const ok = canBuild(this.state, m.id).ok;
       const half = (w - 48) / 2;
       out.push({ rect: { x: x + 16, y: by, w: half, h: bh }, label: "Build", primary: true, enabled: ok, act: () => {
-        if (build(this.state, m.id)) { Sfx.build(); this.modal = null; } } });
+        if (build(this.state, m.id)) { Sfx.build(); this.app.save(); this.modal = null; } } });
       out.push({ rect: { x: x + 32 + half, y: by, w: half, h: bh }, label: "Cancel", act: () => (this.modal = null) });
     } else if (m.kind === "recruit") {
       const maxN = Math.min(this.state.town.available[m.cid] ?? 0, maxAffordable(this.state, m.cid));
@@ -163,7 +163,7 @@ export class TownScene implements Scene {
       const half = (w - 48) / 2;
       const target = this.heroHere ? this.state.hero.army : this.state.town.garrison;
       out.push({ rect: { x: x + 16, y: by, w: half, h: bh }, label: "Recruit", primary: true, enabled: maxN > 0, act: () => {
-        if (recruit(this.state, m.cid, m.qty, target)) { Sfx.coin(); this.modal = null; } } });
+        if (recruit(this.state, m.cid, m.qty, target)) { Sfx.coin(); this.app.save(); this.modal = null; } } });
       out.push({ rect: { x: x + 32 + half, y: by, w: half, h: bh }, label: "Close", act: () => (this.modal = null) });
     } else if (m.kind === "market") {
       RESOURCE_ORDER.filter((k) => k !== "gold").forEach((k, i) => {
@@ -334,7 +334,7 @@ export class TownScene implements Scene {
     if (sel && sel.side !== side) {
       const from = this.armyFor(sel.side);
       const moving = from[sel.idx];
-      if (moving) transferStack(from, sel.idx, this.armyFor(side), moving.count);
+      if (moving) { transferStack(from, sel.idx, this.armyFor(side), moving.count); this.app.save(); }
       this.selected = null;
       return;
     }
