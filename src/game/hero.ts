@@ -1,6 +1,7 @@
 // The player's hero: position, movement budget, army and combat bonuses.
 import { Army, makeArmy, Stack } from "./army";
 import { PathTile } from "./pathfind";
+import { SpellId } from "../data/spells";
 
 export class Hero {
   name: string;
@@ -21,6 +22,8 @@ export class Hero {
   // hero has learned at the Mage Guild live in `spells` (see data/spells).
   mana = 10;
   maxMana = 10;
+  // spells learned at the Mage Guild, castable in battle (see data/spells).
+  spells: SpellId[] = [];
   // active path being walked
   path: PathTile[] = [];
 

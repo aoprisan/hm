@@ -4,6 +4,7 @@
 import { CREATURES, CreatureId } from "../data/creatures";
 import { Stack } from "./army";
 import { rng } from "./rng";
+import { Spell } from "../data/spells";
 
 export const BW = 12; // battle grid width
 export const BH = 9; // battle grid height
@@ -34,6 +35,7 @@ export interface BattleUnit {
   side: Side;
   cid: CreatureId;
   count: number;
+  startCount: number; // count at deployment, the cap for healing/resurrection
   hp: number; // current hp of the leading creature
   maxHp: number;
   x: number;
@@ -47,12 +49,22 @@ export interface BattleUnit {
   retaliatedThisRound: boolean;
   defending: boolean; // chose Defend this round (+DEFEND_BONUS defense)
   waited: boolean; // chose Wait — acts later in the round
+  blessed: boolean; // Bless: deals maximum damage this round
+  hasteBonus: number; // Haste: extra speed this round
   slot: number; // original army slot, for stable ordering
 }
 
 export interface AttackResult {
   killed: number;
   damage: number;
+}
+
+// Outcome of a cast, for the battle UI's floaters/banner.
+export interface SpellEffect {
+  damage?: number;
+  killed?: number;
+  revived?: number;
+  healed?: number;
 }
 
 // A non-randomized forecast of an attack, for the UI preview and the AI.
@@ -68,6 +80,7 @@ export class Battle {
   round = 1;
   active: BattleUnit | null = null;
   winner: Side | null = null;
+  castThisRound = false; // the hero may cast one spell per round
   features = new Map<number, ObstacleKind>(); // terrain features as y*BW+x -> kind
 
   constructor(
@@ -158,6 +171,7 @@ export class Battle {
         side,
         cid: s.id,
         count: s.count,
+        startCount: s.count,
         hp: c.hp,
         maxHp: c.hp,
         x: i % 2 === 1 && stacks.length > 4 ? col1 : col0,
@@ -171,6 +185,8 @@ export class Battle {
         retaliatedThisRound: false,
         defending: false,
         waited: false,
+        blessed: false,
+        hasteBonus: 0,
         slot: i,
       });
     });
@@ -185,13 +201,21 @@ export class Battle {
   }
 
   startRound(): void {
+    this.castThisRound = false;
     for (const u of this.units) {
       u.actedThisRound = false;
       u.retaliatedThisRound = false;
       u.defending = false;
       u.waited = false;
+      u.blessed = false;
+      u.hasteBonus = 0;
     }
     this.advance();
+  }
+
+  // Speed including the Haste buff.
+  effSpeed(u: BattleUnit): number {
+    return u.speed + u.hasteBonus;
   }
 
   // The remaining turn order for this round: fast units first, then units that
@@ -200,8 +224,8 @@ export class Battle {
     const pending = this.units.filter((u) => u.count > 0 && !u.actedThisRound);
     const tie = (a: BattleUnit, b: BattleUnit) =>
       (a.side === "attacker" ? -1 : 1) - (b.side === "attacker" ? -1 : 1) || a.slot - b.slot;
-    const normal = pending.filter((u) => !u.waited).sort((a, b) => b.speed - a.speed || tie(a, b));
-    const waited = pending.filter((u) => u.waited).sort((a, b) => a.speed - b.speed || tie(a, b));
+    const normal = pending.filter((u) => !u.waited).sort((a, b) => this.effSpeed(b) - this.effSpeed(a) || tie(a, b));
+    const waited = pending.filter((u) => u.waited).sort((a, b) => this.effSpeed(a) - this.effSpeed(b) || tie(a, b));
     return [...normal, ...waited];
   }
 
@@ -262,6 +286,7 @@ export class Battle {
   // marsh which costs MARSH_COST. Returns every cell reachable within `speed`.
   reachable(u: BattleUnit): Set<number> {
     const out = new Set<number>();
+    const speed = this.effSpeed(u);
     const start = u.y * BW + u.x;
     const dist = new Map<number, number>([[start, 0]]);
     const visited = new Set<number>();
@@ -273,7 +298,7 @@ export class Battle {
       }
       if (cur < 0) break;
       visited.add(cur);
-      if (cd >= u.speed) continue;
+      if (cd >= speed) continue;
       const cx = cur % BW, cy = Math.floor(cur / BW);
       for (let dy = -1; dy <= 1; dy++) {
         for (let dx = -1; dx <= 1; dx++) {
@@ -283,7 +308,7 @@ export class Battle {
           if (this.unitAt(nx, ny)) continue; // blocked by a unit
           if (this.isObstacle(nx, ny)) continue; // blocked by rock/tree/crater
           const nd = cd + this.enterCost(nx, ny);
-          if (nd > u.speed) continue;
+          if (nd > speed) continue;
           const nk = ny * BW + nx;
           if (nd < (dist.get(nk) ?? Infinity)) { dist.set(nk, nd); out.add(nk); }
         }
@@ -310,6 +335,7 @@ export class Battle {
   // --- combat resolution ---
   private rollBaseDamage(u: BattleUnit): number {
     const c = CREATURES[u.cid];
+    if (u.blessed) return u.count * c.dmgMax; // Bless: every creature rolls max
     let total = 0;
     const n = Math.min(u.count, 100); // sample to avoid huge loops
     const scale = u.count / Math.max(1, n);
@@ -383,6 +409,33 @@ export class Battle {
 
   canShoot(u: BattleUnit): boolean {
     return u.ranged && u.shots > 0 && !this.hasAdjacentEnemy(u);
+  }
+
+  // Cast a hero spell at `target`. Lightning ignores armor (flat damage); Bless
+  // and Haste set per-round buff flags; Heal restores hp and revives felled
+  // troops up to the stack's deployment size.
+  castSpell(spell: Spell, target: BattleUnit): SpellEffect {
+    switch (spell.kind) {
+      case "damage": {
+        const res = this.applyDamage(target, spell.power);
+        return { damage: res.damage, killed: res.killed };
+      }
+      case "buff": {
+        if (spell.id === "bless") target.blessed = true;
+        else if (spell.id === "haste") target.hasteBonus += spell.power;
+        return {};
+      }
+      case "heal": {
+        if (target.count <= 0) return {};
+        const before = target.count;
+        const pool = (target.count - 1) * target.maxHp + target.hp;
+        const cap = target.startCount * target.maxHp;
+        const np = Math.min(cap, pool + spell.power);
+        target.count = Math.max(1, Math.ceil(np / target.maxHp));
+        target.hp = np - (target.count - 1) * target.maxHp;
+        return { healed: spell.power, revived: target.count - before };
+      }
+    }
   }
 }
 

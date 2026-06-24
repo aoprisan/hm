@@ -10,15 +10,17 @@ import { TerrainKind } from "../data/terrain";
 import { FactionId } from "../data/factions";
 import { CreatureId } from "../data/creatures";
 import { BuildingId } from "../data/buildings";
+import { SpellId } from "../data/spells";
 
 const SAVE_KEY = "realms-of-valor-save";
 // Bump when the save shape changes incompatibly; older saves are then ignored.
-const SAVE_VERSION = 1;
+const SAVE_VERSION = 2;
 
 interface HeroSave {
   name: string; x: number; y: number; fx: number; fy: number; facing: 1 | -1;
   attack: number; defense: number; scouting: number; level: number; experience: number;
   movePoints: number; maxMovePoints: number; mana: number; maxMana: number;
+  spells: SpellId[];
   army: Army;
 }
 interface TownSave {
@@ -49,7 +51,7 @@ export function serialize(s: GameState): SaveData {
       attack: h.attack, defense: h.defense, scouting: h.scouting,
       level: h.level, experience: h.experience,
       movePoints: h.movePoints, maxMovePoints: h.maxMovePoints,
-      mana: h.mana, maxMana: h.maxMana, army: h.army,
+      mana: h.mana, maxMana: h.maxMana, spells: h.spells.slice(), army: h.army,
     },
     town: {
       name: s.town.name, faction: s.town.faction, x: s.town.x, y: s.town.y,
@@ -68,6 +70,7 @@ export function deserialize(d: SaveData): GameState {
   hero.scouting = hd.scouting; hero.level = hd.level; hero.experience = hd.experience;
   hero.movePoints = hd.movePoints; hero.maxMovePoints = hd.maxMovePoints;
   hero.mana = hd.mana ?? hero.mana; hero.maxMana = hd.maxMana ?? hero.maxMana;
+  hero.spells = hd.spells ?? [];
   hero.army = hd.army;
 
   const town: TownState = {

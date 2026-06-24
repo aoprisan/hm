@@ -10,6 +10,7 @@ import { Input } from "../engine/input";
 import { Sfx } from "../engine/audio";
 import { Battle, BattleUnit, BW, BH, aiDecide } from "../game/combat";
 import { CREATURES } from "../data/creatures";
+import { SPELLS, SpellId, Spell } from "../data/spells";
 import { Stack } from "../game/army";
 import { creatureSprite } from "../art/sprites_creatures";
 import { Button, button, glass, panel, parchment, pointInRect, roundRectPath, text, textShadow, wrapText } from "../ui/widgets";
@@ -24,6 +25,7 @@ interface BattleLayout {
   topH: number; iniH: number; ctrlH: number;
   cell: number; gx: number; gy: number;
   btnWait: Button; btnDefend: Button; btnAuto: Button; btnFlee: Button;
+  btnCast?: Button; // only when the hero knows spells
 }
 
 interface Floater { x: number; y: number; text: string; color: string; t: number; }
@@ -46,6 +48,8 @@ export class BattleScene implements Scene {
   private resultText = "";
   private banner = ""; // transient narration ("Cavalry waits", "Pikemen defend")
   private bannerT = 0;
+  private pickingSpell = false; // spell list open, awaiting a spell choice
+  private casting: SpellId | null = null; // spell chosen, awaiting a target
   private time = 0; // wall-clock accumulator for ambient animation (flames)
   private lay!: BattleLayout;
 
@@ -79,18 +83,26 @@ export class BattleScene implements Scene {
     const gx = Math.round((vw - cell * BW) / 2);
     const gy = Math.round(gridTop + (gridH - cell * BH) / 2);
     const side = 10, gap = 8;
-    const bw = (vw - side * 2 - gap * 3) / 4;
+    // A Cast button joins the row only when the hero has learned spells.
+    const hasSpells = this.app.state.hero.spells.length > 0;
+    const n = hasSpells ? 5 : 4;
+    const bw = (vw - side * 2 - gap * (n - 1)) / n;
     const by = vh - ctrlH + (ctrlH - 46) / 2, bh = 46;
     const at = (i: number): number => side + (bw + gap) * i;
-    const btnWait: Button = { x: at(0), y: by, w: bw, h: bh, label: "Wait" };
-    const btnDefend: Button = { x: at(1), y: by, w: bw, h: bh, label: "Defend" };
-    const btnAuto: Button = { x: at(2), y: by, w: bw, h: bh, label: "Auto", primary: true };
-    const btnFlee: Button = { x: at(3), y: by, w: bw, h: bh, label: "Flee" };
-    return { vw, vh, topH, iniH, ctrlH, cell, gx, gy, btnWait, btnDefend, btnAuto, btnFlee };
+    let i = 0;
+    const btnWait: Button = { x: at(i++), y: by, w: bw, h: bh, label: "Wait" };
+    const btnDefend: Button = { x: at(i++), y: by, w: bw, h: bh, label: "Defend" };
+    const btnCast: Button | undefined = hasSpells
+      ? { x: at(i++), y: by, w: bw, h: bh, label: "Cast" } : undefined;
+    const btnAuto: Button = { x: at(i++), y: by, w: bw, h: bh, label: "Auto", primary: true };
+    const btnFlee: Button = { x: at(i++), y: by, w: bw, h: bh, label: "Flee" };
+    return { vw, vh, topH, iniH, ctrlH, cell, gx, gy, btnWait, btnDefend, btnAuto, btnFlee, btnCast };
   }
 
   // ---------- turn flow ----------
   private beginTurn(): void {
+    this.pickingSpell = false;
+    this.casting = null;
     if (!this.battle.active || this.battle.winner) { this.finish(); return; }
     const u = this.battle.active;
     if (u.side === "attacker") {
@@ -232,8 +244,10 @@ export class BattleScene implements Scene {
       return;
     }
     if (this.phase !== "player") return;
+    if (k === "Escape") { this.pickingSpell = false; this.casting = null; return; }
     const low = k.toLowerCase();
-    if (low === "w") this.doWait();
+    if (low === "c") this.openSpellMenu();
+    else if (low === "w") this.doWait();
     else if (low === "d" || k === "Enter" || k === " ") this.doDefend();
     else if (low === "a") this.autoBattle();
     else if (low === "f") this.flee();
@@ -261,12 +275,92 @@ export class BattleScene implements Scene {
     this.beginTurn();
   }
 
+  // ---------- spellcasting ----------
+  private openSpellMenu(): void {
+    const hero = this.app.state.hero;
+    if (!hero.spells.length) return;
+    if (this.battle.castThisRound) { this.flashBanner("Already cast a spell this round"); return; }
+    if (!hero.spells.some((s) => hero.mana >= SPELLS[s].cost)) { this.flashBanner("Not enough mana"); return; }
+    Sfx.click();
+    this.casting = null;
+    this.pickingSpell = true;
+  }
+
+  // Rects for the pop-up spell list, stacked above the control bar.
+  private spellMenuRects(): { sid: SpellId; rect: { x: number; y: number; w: number; h: number } }[] {
+    const spells = this.app.state.hero.spells;
+    const { vw, vh, ctrlH } = this.lay;
+    const rowH = 44, gap = 6;
+    const w = Math.min(280, vw - 20);
+    const x = (vw - w) / 2;
+    const top = vh - ctrlH - spells.length * (rowH + gap) - 8;
+    return spells.map((sid, i) => ({ sid, rect: { x, y: top + i * (rowH + gap), w, h: rowH } }));
+  }
+
+  private handleSpellMenuClick(px: number, py: number): void {
+    const hero = this.app.state.hero;
+    for (const { sid, rect } of this.spellMenuRects()) {
+      if (!pointInRect(px, py, rect)) continue;
+      const sp = SPELLS[sid];
+      if (hero.mana < sp.cost) { this.flashBanner("Not enough mana"); return; }
+      Sfx.click();
+      this.pickingSpell = false;
+      this.casting = sid;
+      this.flashBanner(sp.target === "enemy" ? "Choose an enemy stack" : "Choose an allied stack");
+      return;
+    }
+    this.pickingSpell = false; // tapped outside the list — cancel
+  }
+
+  private handleCastTargetClick(px: number, py: number): void {
+    const cell = this.pointToCell(px, py);
+    const sp = SPELLS[this.casting!];
+    const wantSide = sp.target === "enemy" ? "defender" : "attacker";
+    if (cell.x < 0) { this.casting = null; return; }
+    const target = this.battle.unitAt(cell.x, cell.y);
+    if (!target || target.side !== wantSide || target.count <= 0) { this.casting = null; return; }
+    this.castAt(sp, target);
+  }
+
+  private castAt(sp: Spell, target: BattleUnit): void {
+    const hero = this.app.state.hero;
+    const eff = this.battle.castSpell(sp, target);
+    hero.mana -= sp.cost;
+    this.battle.castThisRound = true;
+    this.casting = null;
+    Sfx.cast();
+    this.flashBanner(`${hero.name} casts ${sp.name}`);
+    if (eff.damage) {
+      this.pushFloater(target, `-${eff.damage}`, "#c08aff");
+      if (eff.killed) this.pushFloater(target, `${eff.killed} slain`, "#ffd0a0", 18);
+    } else if (eff.revived) {
+      this.pushFloater(target, `+${eff.revived} revived`, "#9affb0");
+    } else if (eff.healed) {
+      this.pushFloater(target, "healed", "#9affb0");
+    } else {
+      this.pushFloater(target, sp.name, "#9ad0ff");
+    }
+    // A nuke may have ended the battle; otherwise the active stack still acts,
+    // so refresh its reach (Haste/Bless may have changed it).
+    if (this.battle.checkWinner()) {
+      for (const u of this.battle.units) { const rp = this.rpos.get(u)!; rp.x = u.x; rp.y = u.y; }
+      this.finish();
+      return;
+    }
+    const a = this.battle.active;
+    if (a) this.reach = this.battle.reachable(a);
+  }
+
   private handleClick(px: number, py: number): void {
     if (this.phase === "over") { this.continueOut(); return; }
     if (this.phase !== "player") return;
+    // spell selection takes over the grid/buttons while active
+    if (this.pickingSpell) { this.handleSpellMenuClick(px, py); return; }
+    if (this.casting) { this.handleCastTargetClick(px, py); return; }
     // buttons
     if (pointInRect(px, py, this.lay.btnWait)) { this.doWait(); return; }
     if (pointInRect(px, py, this.lay.btnDefend)) { this.doDefend(); return; }
+    if (this.lay.btnCast && pointInRect(px, py, this.lay.btnCast)) { this.openSpellMenu(); return; }
     if (pointInRect(px, py, this.lay.btnAuto)) { Sfx.click(); this.autoBattle(); return; }
     if (pointInRect(px, py, this.lay.btnFlee)) { Sfx.click(); this.flee(); return; }
 
@@ -413,6 +507,8 @@ export class BattleScene implements Scene {
     if (this.phase === "player") { this.drawPreview(ctx); this.drawTerrainTip(ctx); }
     this.drawBanner(ctx);
     this.drawControls(ctx);
+    if (this.casting) this.drawCastTargets(ctx);
+    if (this.pickingSpell) this.drawSpellMenu(ctx);
     if (this.phase === "over") this.drawResult(ctx);
   }
 
@@ -861,8 +957,39 @@ export class BattleScene implements Scene {
     const a = this.battle.active;
     button(ctx, { ...this.lay.btnWait, enabled: enabled && this.battle.canWait(a) }, false);
     button(ctx, { ...this.lay.btnDefend, enabled }, false);
+    if (this.lay.btnCast) {
+      const hero = this.app.state.hero;
+      const canCast = enabled && !this.battle.castThisRound
+        && hero.spells.some((s) => hero.mana >= SPELLS[s].cost);
+      button(ctx, { ...this.lay.btnCast, enabled: canCast }, false);
+      text(ctx, `✦ ${hero.mana}/${hero.maxMana}`, this.lay.btnCast.x + this.lay.btnCast.w / 2,
+        this.lay.btnCast.y - 6, "#c8a0ff", "11px 'Trebuchet MS'", "center");
+    }
     button(ctx, { ...this.lay.btnAuto, enabled }, false);
     button(ctx, { ...this.lay.btnFlee, enabled }, false);
+  }
+
+  // The pop-up spell list shown while choosing which spell to cast.
+  private drawSpellMenu(ctx: CanvasRenderingContext2D): void {
+    const hero = this.app.state.hero;
+    for (const { sid, rect } of this.spellMenuRects()) {
+      const sp = SPELLS[sid];
+      button(ctx, { ...rect, label: `${sp.name}  (${sp.cost})`, enabled: hero.mana >= sp.cost }, false);
+    }
+  }
+
+  // Outline the stacks that are valid targets for the spell being aimed.
+  private drawCastTargets(ctx: CanvasRenderingContext2D): void {
+    const sp = SPELLS[this.casting!];
+    const wantSide = sp.target === "enemy" ? "defender" : "attacker";
+    const { cell } = this.lay;
+    ctx.strokeStyle = "#c8a0ff";
+    ctx.lineWidth = 3;
+    for (const u of this.battle.units) {
+      if (u.count <= 0 || u.side !== wantSide) continue;
+      const c = this.cellCenter(u.x, u.y);
+      ctx.strokeRect(c.x - cell / 2 + 2, c.y - cell / 2 + 2, cell - 4, cell - 4);
+    }
   }
 
   private drawResult(ctx: CanvasRenderingContext2D): void {
