@@ -12,13 +12,22 @@ export const DEFEND_BONUS = 3; // defense added while a stack is defending
 export type Side = "attacker" | "defender";
 
 // Battlefield terrain features. Boulder/tree/crater are impassable cover;
-// marsh is passable but costs extra movement (difficult terrain).
-export type ObstacleKind = "boulder" | "tree" | "crater" | "marsh";
+// marsh and quicksand are passable but cost extra movement; quicksand and
+// witchfire are hazards that wound a stack that ends its move on them.
+export type ObstacleKind = "boulder" | "tree" | "crater" | "marsh" | "quicksand" | "fire";
 
-export const MARSH_COST = 2; // movement cost to enter a marsh cell
+export const MARSH_COST = 2; // movement cost to enter difficult ground
 
 export function blocksMovement(k: ObstacleKind): boolean {
-  return k !== "marsh";
+  return k === "boulder" || k === "tree" || k === "crater";
+}
+
+// Fraction of a stack's total hit points lost when it ends its move on a
+// hazard (0 for non-hazard terrain).
+export function hazardFraction(k: ObstacleKind): number {
+  if (k === "fire") return 0.18;
+  if (k === "quicksand") return 0.12;
+  return 0;
 }
 
 export interface BattleUnit {
@@ -79,14 +88,16 @@ export class Battle {
   // lanes, chokepoints and difficult ground. Kept clear of the deployment
   // columns. Boulders/trees/craters block; marshes merely slow.
   private scatterFeatures(): void {
-    // weighted bag — impassable cover is common, marsh patches less so
+    // weighted bag — impassable cover is common, soft/hazard ground rarer
     const bag: ObstacleKind[] = [
       "boulder", "boulder", "boulder",
       "tree", "tree",
       "crater",
       "marsh", "marsh",
+      "quicksand",
+      "fire",
     ];
-    const n = rng.int(5, 9);
+    const n = rng.int(6, 10);
     let guard = 0;
     while (this.features.size < n && guard++ < 300) {
       const x = rng.int(2, BW - 3);
@@ -110,7 +121,25 @@ export class Battle {
 
   // Movement cost to enter a cell (difficult terrain costs more).
   private enterCost(x: number, y: number): number {
-    return this.features.get(y * BW + x) === "marsh" ? MARSH_COST : 1;
+    const f = this.features.get(y * BW + x);
+    return f === "marsh" || f === "quicksand" ? MARSH_COST : 1;
+  }
+
+  // True if standing on this cell wounds the occupant at move's end.
+  isHazard(x: number, y: number): boolean {
+    const f = this.features.get(y * BW + x);
+    return !!f && hazardFraction(f) > 0;
+  }
+
+  // Apply a hazard's bite to a stack that just finished moving onto it.
+  // Returns the damage/kills dealt, or null if the cell is harmless.
+  applyHazard(u: BattleUnit): AttackResult | null {
+    const f = this.features.get(u.y * BW + u.x);
+    if (!f) return null;
+    const frac = hazardFraction(f);
+    if (frac <= 0 || u.count <= 0) return null;
+    const pool = (u.count - 1) * u.maxHp + u.hp;
+    return this.applyDamage(u, Math.max(u.maxHp, Math.round(pool * frac)));
   }
 
   private placeSide(

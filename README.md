@@ -91,10 +91,11 @@ trigger it manually from the **Actions** tab via *Run workflow*).
 - Hover an enemy to see a **damage forecast** — estimated damage, how many you
   may slay, and whether they'll **retaliate**.
 - Melee attacks provoke one **retaliation** per round.
-- **Terrain features** shape every field: **boulders**, **pine trees** and
-  **craters** are impassable cover that form lanes and chokepoints to screen
-  your shooters, while **marshes** are passable but cost extra movement — wade
-  through and you'll arrive a turn late.
+- **Terrain features** shape every field (hover any tile for a label):
+  **boulders**, **pine trees** and **craters** are impassable cover that form
+  lanes and chokepoints to screen your shooters; **marshes** are passable but
+  cost extra movement; and **quicksand** and **witchfire** are hazards — end a
+  move on them and the stack is wounded (sinks or burns), so route around them.
 - **Wait** holds a stack to act later in the round (slower waiters go first);
   **Defend** raises its defense until its next turn; **Auto** resolves the rest
   instantly; **Flee** retreats (and loses the engagement). Keyboard: `W`/`D`/`A`/`F`.
@@ -123,7 +124,8 @@ src/
   nearest-neighbor. Every visual is a baked offscreen canvas. Scenes lay out
   against the live `vw`/`vh`/`portrait` rather than fixed constants.
 - **Combat** is "simplified tactical": cost-aware grid movement around terrain
-  (boulders/trees/craters block, marshes slow) + melee/ranged + one retaliation,
+  (boulders/trees/craters block, marshes/quicksand slow, quicksand/witchfire
+  wound) + melee/ranged + one retaliation,
   a speed-based initiative order, **Wait** and **Defend** stances, and a
   non-random damage forecast, with HOMM2-style damage
   (`count × dmg × attack/defense multiplier`). No spells, morale, or luck.

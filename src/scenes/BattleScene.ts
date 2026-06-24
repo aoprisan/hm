@@ -46,6 +46,7 @@ export class BattleScene implements Scene {
   private resultText = "";
   private banner = ""; // transient narration ("Cavalry waits", "Pikemen defend")
   private bannerT = 0;
+  private time = 0; // wall-clock accumulator for ambient animation (flames)
   private lay!: BattleLayout;
 
   constructor(
@@ -125,7 +126,10 @@ export class BattleScene implements Scene {
     if (s.kind === "move") {
       this.stepDur = 0.06 + 0.04 * Math.max(Math.abs(s.unit.x - s.to.x), Math.abs(s.unit.y - s.to.y));
       this.battle.moveTo(s.unit, s.to.x, s.to.y);
+      this.applyHazardAt(s.unit);
     } else {
+      // a hazard may have wiped the attacker (or its target) before it strikes
+      if (s.unit.count <= 0 || s.target.count <= 0) { this.startNextStep(); return; }
       this.stepDur = 0.4;
       const res = this.battle.attack(s.unit, s.target, s.isShot);
       if (s.isShot) Sfx.shoot(); else Sfx.hit();
@@ -141,6 +145,17 @@ export class BattleScene implements Scene {
   private pushFloater(u: BattleUnit, str: string, color: string, dy = 0): void {
     const c = this.cellCenter(u.x, u.y);
     this.floaters.push({ x: c.x, y: c.y - 24 - dy, text: str, color, t: 0 });
+  }
+
+  // Wound a stack that just stepped onto quicksand / witchfire.
+  private applyHazardAt(u: BattleUnit): void {
+    const res = this.battle.applyHazard(u);
+    if (!res) return;
+    const fire = this.battle.featureAt(u.x, u.y) === "fire";
+    Sfx.hit();
+    this.pushFloater(u, `-${res.damage}`, fire ? "#ff9a3a" : "#c8b078");
+    if (res.killed > 0) this.pushFloater(u, fire ? `${res.killed} burned` : `${res.killed} sank`, "#ffd0a0", 18);
+    this.flashBanner(fire ? `${CREATURES[u.cid].name} scorched by witchfire` : `${CREATURES[u.cid].name} mired in quicksand`);
   }
 
   private finish(): void {
@@ -160,6 +175,7 @@ export class BattleScene implements Scene {
   // ---------- input / actions ----------
   update(dt: number, input: Input): void {
     this.lay = this.layout();
+    this.time += dt;
     // floaters + banner
     for (const f of this.floaters) f.t += dt;
     this.floaters = this.floaters.filter((f) => f.t < 1);
@@ -339,9 +355,15 @@ export class BattleScene implements Scene {
       const action = aiDecide(this.battle, u);
       if (action.kind === "shoot") this.battle.attack(u, action.target, true);
       else if (action.kind === "attack") {
-        if (action.from.x !== u.x || action.from.y !== u.y) this.battle.moveTo(u, action.from.x, action.from.y);
-        this.battle.attack(u, action.target, false);
-      } else if (action.kind === "move") this.battle.moveTo(u, action.to.x, action.to.y);
+        if (action.from.x !== u.x || action.from.y !== u.y) {
+          this.battle.moveTo(u, action.from.x, action.from.y);
+          this.battle.applyHazard(u);
+        }
+        if (u.count > 0 && action.target.count > 0) this.battle.attack(u, action.target, false);
+      } else if (action.kind === "move") {
+        this.battle.moveTo(u, action.to.x, action.to.y);
+        this.battle.applyHazard(u);
+      }
       this.battle.endActiveTurn();
     }
     for (const u of this.battle.units) { const rp = this.rpos.get(u)!; rp.x = u.x; rp.y = u.y; }
@@ -388,7 +410,7 @@ export class BattleScene implements Scene {
     this.drawFloaters(ctx);
     this.drawTopBar(ctx);
     this.drawInitiative(ctx);
-    if (this.phase === "player") this.drawPreview(ctx);
+    if (this.phase === "player") { this.drawPreview(ctx); this.drawTerrainTip(ctx); }
     this.drawBanner(ctx);
     this.drawControls(ctx);
     if (this.phase === "over") this.drawResult(ctx);
@@ -424,6 +446,8 @@ export class BattleScene implements Scene {
       const x = k % BW, y = Math.floor(k / BW);
       const sx = gx + x * cell, sy = gy + y * cell;
       if (kind === "marsh") this.drawMarsh(ctx, sx, sy, cell);
+      else if (kind === "quicksand") this.drawQuicksand(ctx, sx, sy, cell);
+      else if (kind === "fire") this.drawFire(ctx, sx, sy, cell);
       else if (kind === "tree") this.drawTree(ctx, sx, sy, cell);
       else if (kind === "crater") this.drawCrater(ctx, sx, sy, cell);
       else this.drawBoulder(ctx, sx, sy, cell);
@@ -542,6 +566,71 @@ export class BattleScene implements Scene {
       ctx.moveTo(rx, sy + cell * 0.8);
       ctx.lineTo(rx + i * cell * 0.04, sy + cell * 0.42);
       ctx.stroke();
+    }
+  }
+
+  private drawQuicksand(ctx: CanvasRenderingContext2D, sx: number, sy: number, cell: number): void {
+    // sandy pit tint
+    ctx.fillStyle = "rgba(120,98,54,0.6)";
+    ctx.fillRect(sx + 1, sy + 1, cell - 2, cell - 2);
+    const cx = sx + cell / 2, cy = sy + cell * 0.56;
+    // concentric sinking rings
+    const rings: [number, string][] = [
+      [0.42, "#9c7e44"],
+      [0.30, "#b89a5e"],
+      [0.18, "#7a5e30"],
+    ];
+    for (const [r, col] of rings) {
+      ctx.fillStyle = col;
+      ctx.beginPath();
+      ctx.ellipse(cx, cy, cell * r, cell * r * 0.6, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // bubbles rising as it churns
+    ctx.fillStyle = "rgba(60,44,20,0.8)";
+    for (let i = 0; i < 3; i++) {
+      const ph = (this.time * 0.6 + i * 0.37) % 1;
+      const bx = cx + (i - 1) * cell * 0.16;
+      const by = cy + cell * 0.12 - ph * cell * 0.28;
+      ctx.beginPath();
+      ctx.arc(bx, by, cell * 0.04 * (1 - ph * 0.5), 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  private drawFire(ctx: CanvasRenderingContext2D, sx: number, sy: number, cell: number): void {
+    // scorched ground
+    ctx.fillStyle = "rgba(30,16,10,0.6)";
+    ctx.fillRect(sx + 1, sy + 1, cell - 2, cell - 2);
+    const cx = sx + cell / 2, base = sy + cell * 0.86;
+    // glowing embers
+    ctx.fillStyle = "rgba(255,120,30,0.25)";
+    ctx.beginPath();
+    ctx.ellipse(cx, base, cell * 0.3, cell * 0.12, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // a few flickering tongues of witchfire
+    const tongues = 3;
+    for (let i = 0; i < tongues; i++) {
+      const off = (i - (tongues - 1) / 2) * cell * 0.2;
+      const flick = Math.sin(this.time * 9 + i * 2.1) * cell * 0.05;
+      const h = cell * (0.42 + 0.12 * Math.sin(this.time * 7 + i)) ;
+      const fx = cx + off + flick;
+      // outer flame (orange)
+      ctx.fillStyle = "#ff7a1e";
+      ctx.beginPath();
+      ctx.moveTo(fx - cell * 0.1, base);
+      ctx.quadraticCurveTo(fx - cell * 0.12, base - h * 0.5, fx, base - h);
+      ctx.quadraticCurveTo(fx + cell * 0.12, base - h * 0.5, fx + cell * 0.1, base);
+      ctx.closePath();
+      ctx.fill();
+      // inner flame (gold), tinted violet for a "witch" feel at the tip
+      ctx.fillStyle = "#ffd24a";
+      ctx.beginPath();
+      ctx.moveTo(fx - cell * 0.05, base);
+      ctx.quadraticCurveTo(fx - cell * 0.06, base - h * 0.4, fx, base - h * 0.72);
+      ctx.quadraticCurveTo(fx + cell * 0.06, base - h * 0.4, fx + cell * 0.05, base);
+      ctx.closePath();
+      ctx.fill();
     }
   }
 
@@ -727,6 +816,34 @@ export class BattleScene implements Scene {
     text(ctx, l1, px + 12, py + 22, "#3a2410", "bold 14px 'Trebuchet MS'");
     text(ctx, l2, px + 12, py + 40, "#7a2a14", "13px 'Trebuchet MS'");
     text(ctx, l3, px + 12, py + 56, willRetaliate ? "#9c5a1a" : "#4a6a2a", "12px 'Trebuchet MS'");
+  }
+
+  // A one-line label naming the terrain under the cursor (and its effect),
+  // shown when not hovering an enemy (which gets the damage forecast instead).
+  private drawTerrainTip(ctx: CanvasRenderingContext2D): void {
+    if (this.hover.x < 0) return;
+    if (this.battle.unitAt(this.hover.x, this.hover.y)) return;
+    const f = this.battle.featureAt(this.hover.x, this.hover.y);
+    if (!f) return;
+    const label: Record<typeof f, string> = {
+      boulder: "Boulder — impassable",
+      tree: "Trees — impassable",
+      crater: "Crater — impassable",
+      marsh: "Marsh — slow (costs 2)",
+      quicksand: "Quicksand — slow, sinks",
+      fire: "Witchfire — burns",
+    };
+    const { gx, gy, cell, topH, iniH, vw, vh, ctrlH } = this.lay;
+    const str = label[f];
+    ctx.font = "12px 'Trebuchet MS'";
+    const w = Math.ceil(ctx.measureText(str).width) + 20;
+    const h = 24;
+    let px = gx + this.hover.x * cell + cell / 2 - w / 2;
+    let py = gy + this.hover.y * cell - h - 4;
+    px = Math.min(Math.max(6, px), vw - w - 6);
+    py = Math.min(Math.max(topH + iniH + 4, py), vh - ctrlH - h - 6);
+    glass(ctx, px, py, w, h, 6, 0.78);
+    text(ctx, str, px + w / 2, py + 16, "#f2e4c0", "12px 'Trebuchet MS'", "center");
   }
 
   private drawBanner(ctx: CanvasRenderingContext2D): void {
