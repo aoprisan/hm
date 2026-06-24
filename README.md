@@ -91,8 +91,10 @@ trigger it manually from the **Actions** tab via *Run workflow*).
 - Hover an enemy to see a **damage forecast** — estimated damage, how many you
   may slay, and whether they'll **retaliate**.
 - Melee attacks provoke one **retaliation** per round.
-- **Boulders** litter the field and block movement — use the lanes and
-  chokepoints to screen your shooters.
+- **Terrain features** shape every field: **boulders**, **pine trees** and
+  **craters** are impassable cover that form lanes and chokepoints to screen
+  your shooters, while **marshes** are passable but cost extra movement — wade
+  through and you'll arrive a turn late.
 - **Wait** holds a stack to act later in the round (slower waiters go first);
   **Defend** raises its defense until its next turn; **Auto** resolves the rest
   instantly; **Flee** retreats (and loses the engagement). Keyboard: `W`/`D`/`A`/`F`.
@@ -120,8 +122,9 @@ src/
   store is scaled by the device pixel ratio for crisp text. Pixel art is drawn
   nearest-neighbor. Every visual is a baked offscreen canvas. Scenes lay out
   against the live `vw`/`vh`/`portrait` rather than fixed constants.
-- **Combat** is "simplified tactical": grid movement around obstacles +
-  melee/ranged + one retaliation, a speed-based initiative order, **Wait** and
-  **Defend** stances, and a non-random damage forecast, with HOMM2-style damage
+- **Combat** is "simplified tactical": cost-aware grid movement around terrain
+  (boulders/trees/craters block, marshes slow) + melee/ranged + one retaliation,
+  a speed-based initiative order, **Wait** and **Defend** stances, and a
+  non-random damage forecast, with HOMM2-style damage
   (`count × dmg × attack/defense multiplier`). No spells, morale, or luck.
 - **Faction:** the Knight ("Castle") town and its six-tier lineup.

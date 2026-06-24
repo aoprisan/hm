@@ -417,38 +417,130 @@ export class BattleScene implements Scene {
     }
   }
 
-  // Rocky boulders that block movement.
+  // Terrain features: impassable boulders/trees/craters and slowing marshes.
   private drawObstacles(ctx: CanvasRenderingContext2D): void {
     const { gx, gy, cell } = this.lay;
-    for (const k of this.battle.obstacles) {
+    for (const [k, kind] of this.battle.features) {
       const x = k % BW, y = Math.floor(k / BW);
-      const cx = gx + x * cell + cell / 2;
-      const cy = gy + y * cell + cell * 0.58;
-      const rw = cell * 0.36, rh = cell * 0.28;
-      ctx.fillStyle = "rgba(0,0,0,0.22)";
+      const sx = gx + x * cell, sy = gy + y * cell;
+      if (kind === "marsh") this.drawMarsh(ctx, sx, sy, cell);
+      else if (kind === "tree") this.drawTree(ctx, sx, sy, cell);
+      else if (kind === "crater") this.drawCrater(ctx, sx, sy, cell);
+      else this.drawBoulder(ctx, sx, sy, cell);
+    }
+  }
+
+  private groundShadow(ctx: CanvasRenderingContext2D, cx: number, by: number, rw: number): void {
+    ctx.fillStyle = "rgba(0,0,0,0.22)";
+    ctx.beginPath();
+    ctx.ellipse(cx, by, rw, rw * 0.32, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  private drawBoulder(ctx: CanvasRenderingContext2D, sx: number, sy: number, cell: number): void {
+    const cx = sx + cell / 2, cy = sy + cell * 0.58;
+    const rw = cell * 0.36, rh = cell * 0.28;
+    this.groundShadow(ctx, cx, sy + cell - 5, rw);
+    ctx.fillStyle = "#7c7468";
+    ctx.beginPath();
+    ctx.moveTo(cx - rw, cy + rh);
+    ctx.lineTo(cx - rw * 0.7, cy - rh);
+    ctx.lineTo(cx + rw * 0.2, cy - rh * 1.2);
+    ctx.lineTo(cx + rw, cy - rh * 0.2);
+    ctx.lineTo(cx + rw * 0.8, cy + rh);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = "#9a9286";
+    ctx.beginPath();
+    ctx.moveTo(cx - rw * 0.7, cy - rh);
+    ctx.lineTo(cx + rw * 0.2, cy - rh * 1.2);
+    ctx.lineTo(cx + rw * 0.1, cy);
+    ctx.lineTo(cx - rw * 0.3, cy);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = "rgba(40,32,20,0.5)";
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  }
+
+  private drawTree(ctx: CanvasRenderingContext2D, sx: number, sy: number, cell: number): void {
+    const cx = sx + cell / 2;
+    const baseY = sy + cell - 5;
+    this.groundShadow(ctx, cx, baseY, cell * 0.3);
+    // trunk
+    ctx.fillStyle = "#6b4a24";
+    ctx.fillRect(cx - cell * 0.05, sy + cell * 0.5, cell * 0.1, cell * 0.42);
+    // layered pine canopy
+    const tip = sy + cell * 0.08;
+    const tiers = [0.42, 0.6, 0.8];
+    for (let i = 0; i < tiers.length; i++) {
+      const w = cell * (0.18 + i * 0.13);
+      const top = tip + (sy + cell * 0.58 - tip) * (i / tiers.length);
+      const bot = sy + cell * tiers[i];
+      ctx.fillStyle = i % 2 ? "#3f7a37" : "#356b2f";
       ctx.beginPath();
-      ctx.ellipse(cx, gy + y * cell + cell - 5, rw, rh * 0.4, 0, 0, Math.PI * 2);
-      ctx.fill();
-      // boulder body
-      ctx.fillStyle = "#7c7468";
-      ctx.beginPath();
-      ctx.moveTo(cx - rw, cy + rh);
-      ctx.lineTo(cx - rw * 0.7, cy - rh);
-      ctx.lineTo(cx + rw * 0.2, cy - rh * 1.2);
-      ctx.lineTo(cx + rw, cy - rh * 0.2);
-      ctx.lineTo(cx + rw * 0.8, cy + rh);
+      ctx.moveTo(cx, top);
+      ctx.lineTo(cx - w, bot);
+      ctx.lineTo(cx + w, bot);
       ctx.closePath();
       ctx.fill();
-      ctx.fillStyle = "#9a9286";
+    }
+    // highlight
+    ctx.fillStyle = "rgba(180,230,150,0.35)";
+    ctx.beginPath();
+    ctx.moveTo(cx, tip);
+    ctx.lineTo(cx - cell * 0.06, sy + cell * 0.34);
+    ctx.lineTo(cx + cell * 0.02, sy + cell * 0.34);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  private drawCrater(ctx: CanvasRenderingContext2D, sx: number, sy: number, cell: number): void {
+    const cx = sx + cell / 2, cy = sy + cell * 0.6;
+    const rw = cell * 0.38, rh = cell * 0.24;
+    // raised rim
+    ctx.fillStyle = "#6a5232";
+    ctx.beginPath();
+    ctx.ellipse(cx, cy, rw, rh, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // dark pit
+    ctx.fillStyle = "#241a10";
+    ctx.beginPath();
+    ctx.ellipse(cx, cy, rw * 0.72, rh * 0.7, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#0f0a06";
+    ctx.beginPath();
+    ctx.ellipse(cx, cy + rh * 0.12, rw * 0.45, rh * 0.42, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  private drawMarsh(ctx: CanvasRenderingContext2D, sx: number, sy: number, cell: number): void {
+    // flat boggy ground tint
+    ctx.fillStyle = "rgba(58,82,52,0.55)";
+    ctx.fillRect(sx + 1, sy + 1, cell - 2, cell - 2);
+    const cx = sx + cell / 2, cy = sy + cell * 0.62;
+    // murky pools
+    ctx.fillStyle = "rgba(46,72,78,0.85)";
+    ctx.beginPath();
+    ctx.ellipse(cx - cell * 0.12, cy, cell * 0.22, cell * 0.13, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.ellipse(cx + cell * 0.16, cy + cell * 0.12, cell * 0.16, cell * 0.09, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // ripple glints
+    ctx.strokeStyle = "rgba(170,200,190,0.45)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.ellipse(cx - cell * 0.12, cy, cell * 0.12, cell * 0.06, 0, Math.PI * 0.1, Math.PI * 0.9);
+    ctx.stroke();
+    // reeds
+    ctx.strokeStyle = "#5f7a3a";
+    ctx.lineWidth = Math.max(1, cell * 0.03);
+    for (let i = -1; i <= 1; i++) {
+      const rx = cx + i * cell * 0.18 + cell * 0.05;
       ctx.beginPath();
-      ctx.moveTo(cx - rw * 0.7, cy - rh);
-      ctx.lineTo(cx + rw * 0.2, cy - rh * 1.2);
-      ctx.lineTo(cx + rw * 0.1, cy);
-      ctx.lineTo(cx - rw * 0.3, cy);
-      ctx.closePath();
-      ctx.fill();
-      ctx.strokeStyle = "rgba(40,32,20,0.5)";
-      ctx.lineWidth = 1;
+      ctx.moveTo(rx, sy + cell * 0.8);
+      ctx.lineTo(rx + i * cell * 0.04, sy + cell * 0.42);
       ctx.stroke();
     }
   }

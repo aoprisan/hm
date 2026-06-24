@@ -11,6 +11,16 @@ export const DEFEND_BONUS = 3; // defense added while a stack is defending
 
 export type Side = "attacker" | "defender";
 
+// Battlefield terrain features. Boulder/tree/crater are impassable cover;
+// marsh is passable but costs extra movement (difficult terrain).
+export type ObstacleKind = "boulder" | "tree" | "crater" | "marsh";
+
+export const MARSH_COST = 2; // movement cost to enter a marsh cell
+
+export function blocksMovement(k: ObstacleKind): boolean {
+  return k !== "marsh";
+}
+
 export interface BattleUnit {
   side: Side;
   cid: CreatureId;
@@ -49,7 +59,7 @@ export class Battle {
   round = 1;
   active: BattleUnit | null = null;
   winner: Side | null = null;
-  obstacles = new Set<number>(); // blocked cells (rocks/boulders) as y*BW+x
+  features = new Map<number, ObstacleKind>(); // terrain features as y*BW+x -> kind
 
   constructor(
     attacker: (Stack | null)[],
@@ -61,27 +71,46 @@ export class Battle {
   ) {
     this.placeSide(attacker, "attacker", heroAtk, heroDef, 0, 1);
     this.placeSide(defender, "defender", enemyAtk, enemyDef, BW - 1, BW - 2);
-    this.scatterObstacles();
+    this.scatterFeatures();
     this.startRound();
   }
 
-  // Drop a handful of impassable rocks in the central columns to create lanes
-  // and chokepoints. Kept clear of the armies' deployment columns.
-  private scatterObstacles(): void {
-    const n = rng.int(4, 8);
+  // Scatter a mix of terrain features across the central columns to create
+  // lanes, chokepoints and difficult ground. Kept clear of the deployment
+  // columns. Boulders/trees/craters block; marshes merely slow.
+  private scatterFeatures(): void {
+    // weighted bag — impassable cover is common, marsh patches less so
+    const bag: ObstacleKind[] = [
+      "boulder", "boulder", "boulder",
+      "tree", "tree",
+      "crater",
+      "marsh", "marsh",
+    ];
+    const n = rng.int(5, 9);
     let guard = 0;
-    while (this.obstacles.size < n && guard++ < 200) {
-      const x = rng.int(3, BW - 4);
+    while (this.features.size < n && guard++ < 300) {
+      const x = rng.int(2, BW - 3);
       const y = rng.int(0, BH - 1);
       const k = y * BW + x;
-      if (this.obstacles.has(k)) continue;
+      if (this.features.has(k)) continue;
       if (this.unitAt(x, y)) continue;
-      this.obstacles.add(k);
+      this.features.set(k, bag[rng.int(0, bag.length - 1)]);
     }
   }
 
+  featureAt(x: number, y: number): ObstacleKind | undefined {
+    return this.features.get(y * BW + x);
+  }
+
+  // True if a stack cannot stand on / pass through this cell.
   isObstacle(x: number, y: number): boolean {
-    return this.obstacles.has(y * BW + x);
+    const f = this.features.get(y * BW + x);
+    return !!f && blocksMovement(f);
+  }
+
+  // Movement cost to enter a cell (difficult terrain costs more).
+  private enterCost(x: number, y: number): number {
+    return this.features.get(y * BW + x) === "marsh" ? MARSH_COST : 1;
   }
 
   private placeSide(
@@ -200,15 +229,21 @@ export class Battle {
   }
 
   // --- movement ---
+  // Cost-aware flood (Dijkstra): diagonal 8-way steps cost 1, except entering a
+  // marsh which costs MARSH_COST. Returns every cell reachable within `speed`.
   reachable(u: BattleUnit): Set<number> {
     const out = new Set<number>();
-    const dist = new Map<number, number>();
     const start = u.y * BW + u.x;
-    dist.set(start, 0);
-    const q: number[] = [start];
-    while (q.length) {
-      const cur = q.shift()!;
-      const cd = dist.get(cur)!;
+    const dist = new Map<number, number>([[start, 0]]);
+    const visited = new Set<number>();
+    while (true) {
+      // pop the unvisited cell with the smallest accumulated cost
+      let cur = -1, cd = Infinity;
+      for (const [k, d] of dist) {
+        if (!visited.has(k) && d < cd) { cd = d; cur = k; }
+      }
+      if (cur < 0) break;
+      visited.add(cur);
       if (cd >= u.speed) continue;
       const cx = cur % BW, cy = Math.floor(cur / BW);
       for (let dy = -1; dy <= 1; dy++) {
@@ -216,13 +251,12 @@ export class Battle {
           if (dx === 0 && dy === 0) continue;
           const nx = cx + dx, ny = cy + dy;
           if (nx < 0 || ny < 0 || nx >= BW || ny >= BH) continue;
-          const nk = ny * BW + nx;
           if (this.unitAt(nx, ny)) continue; // blocked by a unit
-          if (this.obstacles.has(nk)) continue; // blocked by a rock
-          if (dist.has(nk)) continue;
-          dist.set(nk, cd + 1);
-          out.add(nk);
-          q.push(nk);
+          if (this.isObstacle(nx, ny)) continue; // blocked by rock/tree/crater
+          const nd = cd + this.enterCost(nx, ny);
+          if (nd > u.speed) continue;
+          const nk = ny * BW + nx;
+          if (nd < (dist.get(nk) ?? Infinity)) { dist.set(nk, nd); out.add(nk); }
         }
       }
     }
