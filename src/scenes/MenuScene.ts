@@ -10,18 +10,28 @@ import { FactionId, FACTIONS, FACTION_ORDER } from "../data/factions";
 import { creatureSprite } from "../art/sprites_creatures";
 import { castleSprite } from "../art/sprites_objects";
 import {
-  Button, button, parchment, pointInRect, text, textShadow, wrapText, Rect,
+  Button, button, glass, parchment, pointInRect, text, textShadow, wrapText, Rect,
 } from "../ui/widgets";
+import { qrMatrix } from "../util/qrcode";
+import { shareUrl, genericShare } from "../util/share";
 
 interface Layout {
   vw: number; vh: number;
   cols: number;
   cards: { id: FactionId; rect: Rect }[];
   start: Button;
+  btnShare: Button;
+  btnQr: Button;
 }
+
+// Geometry of the QR invite overlay, computed from the live layout.
+interface QrLayout { x: number; y: number; w: number; h: number; close: Rect; share: Button; }
 
 export class MenuScene implements Scene {
   private selected: FactionId = "knight";
+  private qrOpen = false;
+  private qrCache: boolean[][] | null = null;
+  private toast: { msg: string; t: number } | null = null;
 
   constructor(private app: App) {}
   private get r(): Renderer { return this.app.renderer; }
@@ -54,23 +64,61 @@ export class MenuScene implements Scene {
       x: (vw - startW) / 2, y: vh - startH - pad, w: startW, h: startH,
       label: "Start Quest", primary: true,
     };
-    return { vw, vh, cols, cards, start };
+    // Compact invite icons in the top-right corner (share sheet + QR code).
+    const ib = 40, ig = 8;
+    const btnShare: Button = { x: vw - pad - ib, y: pad, w: ib, h: ib, label: "⤴" };
+    const btnQr: Button = { x: vw - pad - ib * 2 - ig, y: pad, w: ib, h: ib, label: "QR" };
+    return { vw, vh, cols, cards, start, btnShare, btnQr };
   }
 
-  update(_dt: number, input: Input): void {
+  // Overlay geometry: a parchment panel holding the QR, the URL and a share button.
+  private qrLayout(L: Layout): QrLayout {
+    const w = Math.min(360, L.vw - 32);
+    const h = Math.min(L.vh - 32, w + 130);
+    const x = (L.vw - w) / 2, y = (L.vh - h) / 2;
+    const close: Rect = { x: x + w - 42, y: y + 10, w: 32, h: 32 };
+    const share: Button = { x: x + 24, y: y + h - 60, w: w - 48, h: 44, label: "Share link", primary: true };
+    return { x, y, w, h, close, share };
+  }
+
+  update(dt: number, input: Input): void {
     const L = this.layout();
+    if (this.toast) { this.toast.t -= dt; if (this.toast.t <= 0) this.toast = null; }
     for (const c of input.takeClicks()) {
       Sfx.click();
+      if (this.qrOpen) {
+        const q = this.qrLayout(L);
+        if (pointInRect(c.x, c.y, q.share)) { this.doShare(); continue; }
+        // Close on the ✕ or anywhere outside the panel.
+        const insidePanel = c.x >= q.x && c.x <= q.x + q.w && c.y >= q.y && c.y <= q.y + q.h;
+        if (pointInRect(c.x, c.y, q.close) || !insidePanel) this.qrOpen = false;
+        continue;
+      }
+      if (pointInRect(c.x, c.y, L.btnQr)) { this.openQr(); continue; }
+      if (pointInRect(c.x, c.y, L.btnShare)) { this.doShare(); continue; }
       if (pointInRect(c.x, c.y, L.start)) { this.app.newGame(this.selected); return; }
       for (const card of L.cards) {
         if (pointInRect(c.x, c.y, card.rect)) { this.selected = card.id; break; }
       }
     }
     for (const k of input.takeKeys()) {
+      if (this.qrOpen) { if (k === "Escape" || k === "Enter" || k === " ") this.qrOpen = false; continue; }
       if (k === "Enter" || k === " ") { this.app.newGame(this.selected); return; }
       if (k === "ArrowRight" || k === "ArrowDown") this.step(1);
       if (k === "ArrowLeft" || k === "ArrowUp") this.step(-1);
     }
+  }
+
+  private openQr(): void {
+    this.qrCache ??= qrMatrix(shareUrl());
+    this.qrOpen = true;
+  }
+
+  private doShare(): void {
+    void genericShare().then((result) => {
+      if (result === "copied") this.toast = { msg: "Link copied!", t: 1.8 };
+      else if (result === "unavailable") this.toast = { msg: shareUrl(), t: 3.5 };
+    });
   }
 
   private step(dir: number): void {
@@ -98,6 +146,57 @@ export class MenuScene implements Scene {
     for (const card of L.cards) this.drawCard(ctx, card.id, card.rect);
 
     button(ctx, L.start, false);
+    button(ctx, L.btnQr, false);
+    button(ctx, L.btnShare, false);
+
+    if (this.qrOpen) this.drawQr(ctx, L);
+    if (this.toast) this.drawToast(ctx, L);
+  }
+
+  private drawQr(ctx: CanvasRenderingContext2D, L: Layout): void {
+    const q = this.qrLayout(L);
+    // dim the screen behind the panel
+    ctx.fillStyle = "rgba(0,0,0,0.5)";
+    ctx.fillRect(0, 0, L.vw, L.vh);
+    parchment(ctx, q.x, q.y, q.w, q.h);
+    textShadow(ctx, "Invite a friend", q.x + q.w / 2, q.y + 36, "#5b2a10", "bold 20px 'Trebuchet MS'", "center");
+
+    // QR area: a white quiet-zone with black modules, centered horizontally.
+    const m = this.qrCache!;
+    const areaW = q.w - 48;
+    const areaTop = q.y + 52;
+    const areaBottom = q.share.y - 34; // leave room for the URL line below the code
+    const area = Math.max(80, Math.min(areaW, areaBottom - areaTop));
+    const cell = Math.max(1, Math.floor(area / (m.length + 8))); // +8 for a 4-module quiet zone
+    const dim = cell * (m.length + 8);
+    const ox = Math.round(q.x + q.w / 2 - dim / 2);
+    const oy = Math.round(areaTop + (area - dim) / 2);
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(ox, oy, dim, dim);
+    ctx.fillStyle = "#000000";
+    const off = cell * 4; // quiet-zone margin
+    for (let y = 0; y < m.length; y++) {
+      for (let x = 0; x < m.length; x++) {
+        if (m[y][x]) ctx.fillRect(ox + off + x * cell, oy + off + y * cell, cell, cell);
+      }
+    }
+
+    // URL under the code
+    text(ctx, shareUrl(), q.x + q.w / 2, q.share.y - 12, "#5b3a1a", "12px 'Trebuchet MS'", "center");
+
+    button(ctx, q.share, false);
+    button(ctx, { ...q.close, label: "✕" }, false);
+  }
+
+  private drawToast(ctx: CanvasRenderingContext2D, L: Layout): void {
+    const msg = this.toast!.msg;
+    ctx.font = "13px 'Trebuchet MS'";
+    const w = Math.min(L.vw - 32, ctx.measureText(msg).width + 32);
+    const h = 32;
+    const x = (L.vw - w) / 2;
+    const y = L.start.y - h - 14;
+    glass(ctx, x, y, w, h, 8, 0.8);
+    text(ctx, msg, L.vw / 2, y + h / 2 + 4, "#fff0c8", "13px 'Trebuchet MS'", "center");
   }
 
   private drawCard(ctx: CanvasRenderingContext2D, id: FactionId, rect: Rect): void {
