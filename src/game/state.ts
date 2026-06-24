@@ -6,9 +6,11 @@ import { Army, emptyArmy } from "./army";
 import { ResourceBag, bag } from "../data/resources";
 import { BuildingId } from "../data/buildings";
 import { CreatureId } from "../data/creatures";
+import { FactionId, FACTIONS } from "../data/factions";
 
 export interface TownState {
   name: string;
+  faction: FactionId; // which castle type — drives buildings, creatures and art
   built: Set<BuildingId>;
   builtToday: boolean;
   available: Partial<Record<CreatureId, number>>; // creatures waiting in dwellings
@@ -52,12 +54,14 @@ export class GameState {
   }
 }
 
-export function freshTown(x: number, y: number): TownState {
+export function freshTown(x: number, y: number, faction: FactionId, name?: string): TownState {
+  const f = FACTIONS[faction];
   return {
-    name: "Sunhaven",
-    built: new Set<BuildingId>(["townHall", "thatchedHut"]),
+    name: name ?? f.townName,
+    faction,
+    built: new Set<BuildingId>(["townHall", "dwelling1"]),
     builtToday: false,
-    available: { peasant: 12, archer: 0 },
+    available: { [f.lineup[0]]: 12 }, // tier-1 dwelling starts stocked
     garrison: emptyArmy(),
     x,
     y,

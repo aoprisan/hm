@@ -1,7 +1,8 @@
 // Town (castle) screen art: a painted fairy-tale backdrop plus a distinct
 // structure for each building. Buildings are drawn centered on their anchor's
 // bottom. The TownScene dims structures that aren't built yet.
-import { BuildingId } from "../data/buildings";
+import { BuildingId, DWELLING_IDS } from "../data/buildings";
+import { FactionId, FACTIONS } from "../data/factions";
 
 function mk(w: number, h: number): { cv: HTMLCanvasElement; c: CanvasRenderingContext2D } {
   const cv = document.createElement("canvas");
@@ -19,42 +20,55 @@ function tri(c: CanvasRenderingContext2D, x1: number, y1: number, x2: number, y2
   c.moveTo(x1, y1); c.lineTo(x2, y2); c.lineTo(x3, y3); c.closePath(); c.fill();
 }
 
+// lighten/darken a #rrggbb hex toward white/black by `amt` in [-1,1].
+function shade(hex: string, amt: number): string {
+  const n = parseInt(hex.slice(1), 16);
+  const ch = (sh: number) => {
+    let v = (n >> sh) & 0xff;
+    v = amt >= 0 ? v + (255 - v) * amt : v * (1 + amt);
+    return Math.max(0, Math.min(255, Math.round(v)));
+  };
+  const to2 = (v: number) => v.toString(16).padStart(2, "0");
+  return `#${to2(ch(16))}${to2(ch(8))}${to2(ch(0))}`;
+}
+
 const bgCache = new Map<string, HTMLCanvasElement>();
-export function townBackground(w: number, h: number): HTMLCanvasElement {
+export function townBackground(w: number, h: number, faction: FactionId): HTMLCanvasElement {
   w = Math.max(1, Math.round(w));
   h = Math.max(1, Math.round(h));
-  const key = `${w}x${h}`;
+  const key = `${faction}-${w}x${h}`;
   const hit = bgCache.get(key);
   if (hit) return hit;
+  const pal = FACTIONS[faction].palette;
   const { cv, c } = mk(w, h);
   // sky gradient
   const g = c.createLinearGradient(0, 0, 0, h * 0.6);
-  g.addColorStop(0, "#8ec5e8");
-  g.addColorStop(1, "#cfe7f4");
+  g.addColorStop(0, pal.sky[0]);
+  g.addColorStop(1, pal.sky[1]);
   c.fillStyle = g;
   c.fillRect(0, 0, w, h * 0.62);
-  // soft sun
+  // soft sun / moon
   c.fillStyle = "rgba(255,240,176,0.7)";
   c.beginPath(); c.arc(w - 140, 90, 46, 0, Math.PI * 2); c.fill();
   // distant mountains
   for (let i = 0; i < 6; i++) {
     const mx = i * (w / 5);
-    tri(c, mx - 120, h * 0.45, mx, h * 0.18 + (i % 2) * 30, mx + 120, h * 0.45, "#9bb6c9");
+    tri(c, mx - 120, h * 0.45, mx, h * 0.18 + (i % 2) * 30, mx + 120, h * 0.45, shade(pal.mountain, 0.18));
   }
   for (let i = 0; i < 5; i++) {
     const mx = i * (w / 4) + 60;
-    tri(c, mx - 140, h * 0.5, mx, h * 0.26 + (i % 2) * 20, mx + 140, h * 0.5, "#7e9bb0");
+    tri(c, mx - 140, h * 0.5, mx, h * 0.26 + (i % 2) * 20, mx + 140, h * 0.5, pal.mountain);
   }
   // grassy ground
-  r(c, 0, Math.floor(h * 0.45), w, h, "#5b9a42");
-  c.fillStyle = "#4f8a3a";
+  r(c, 0, Math.floor(h * 0.45), w, h, pal.ground);
+  c.fillStyle = pal.groundDetail;
   for (let i = 0; i < 1400; i++) {
     const x = Math.random() * w;
     const y = h * 0.46 + Math.random() * (h * 0.54);
     c.fillRect(x | 0, y | 0, 2, 1);
   }
   // a winding road
-  c.fillStyle = "#b3863f";
+  c.fillStyle = pal.road;
   c.beginPath();
   c.moveTo(w * 0.5 - 60, h);
   c.bezierCurveTo(w * 0.5 - 10, h * 0.8, w * 0.5 + 40, h * 0.7, w * 0.5, h * 0.5);
@@ -67,30 +81,49 @@ export function townBackground(w: number, h: number): HTMLCanvasElement {
 }
 
 // ---- per-building structures ----
-const bcache = new Map<BuildingId, HTMLCanvasElement>();
+// Cached by `shared:<id>` for the 7 faction-agnostic buildings and by
+// `<faction>:<dwellingN>` for the per-faction dwellings.
+const bcache = new Map<string, HTMLCanvasElement>();
 
-export function buildingArt(id: BuildingId): HTMLCanvasElement {
-  const hit = bcache.get(id);
+export function buildingArt(id: BuildingId, faction: FactionId): HTMLCanvasElement {
+  const slot = DWELLING_IDS.indexOf(id as never);
+  const key = slot >= 0 ? `${faction}:${id}` : `shared:${id}`;
+  const hit = bcache.get(key);
   if (hit) return hit;
-  let out: HTMLCanvasElement;
-  switch (id) {
-    case "castle": out = drawCastleWall(); break;
-    case "townHall": out = drawTownHall(); break;
-    case "statue": out = drawStatue(); break;
-    case "well": out = drawWell(); break;
-    case "marketplace": out = drawMarket(); break;
-    case "tavern": out = drawTavern(); break;
-    case "mageGuild": out = drawMageGuild(); break;
-    case "thatchedHut": out = drawHut(); break;
-    case "archeryRange": out = drawArchery(); break;
-    case "blacksmith": out = drawBlacksmith(); break;
-    case "armory": out = drawArmory(); break;
-    case "joustingArena": out = drawJousting(); break;
-    case "cathedral": out = drawCathedral(); break;
-    default: out = mk(40, 40).cv;
-  }
-  bcache.set(id, out);
+  const out = slot >= 0 ? dwellingArt(faction, slot) : sharedBuildingArt(id);
+  bcache.set(key, out);
   return out;
+}
+
+function sharedBuildingArt(id: BuildingId): HTMLCanvasElement {
+  switch (id) {
+    case "castle": return drawCastleWall();
+    case "townHall": return drawTownHall();
+    case "statue": return drawStatue();
+    case "well": return drawWell();
+    case "marketplace": return drawMarket();
+    case "tavern": return drawTavern();
+    case "mageGuild": return drawMageGuild();
+    default: return mk(40, 40).cv;
+  }
+}
+
+interface DwellingColors { wall: string; roof: string; accent: string; dark: string; }
+const DWELLING_COLORS: Record<FactionId, DwellingColors> = {
+  knight: { wall: "#d8b483", roof: "#8a5a2b", accent: "#c8413a", dark: "#3a2410" },
+  sorceress: { wall: "#d8b483", roof: "#2f5a22", accent: "#79b85a", dark: "#5b3a1a" },
+  warlock: { wall: "#5f574c", roof: "#7a3f9a", accent: "#c98ad8", dark: "#1c1610" },
+  necropolis: { wall: "#e9e4d6", roof: "#5f574c", accent: "#9b938a", dark: "#3a2410" },
+};
+
+// Knight keeps its bespoke dwelling art; the other factions share six themed
+// silhouettes (tier 1..6) tinted from their palette.
+function dwellingArt(faction: FactionId, slot: number): HTMLCanvasElement {
+  if (faction === "knight") {
+    return [drawHut, drawArchery, drawBlacksmith, drawArmory, drawJousting, drawCathedral][slot]();
+  }
+  const col = DWELLING_COLORS[faction];
+  return [genHut, genTower, genHall, genKeep, genLair, genTemple][slot](col);
 }
 
 function shadow(c: CanvasRenderingContext2D, cx: number, by: number, rw: number): void {
@@ -306,5 +339,100 @@ function drawCathedral(): HTMLCanvasElement {
   c.fillStyle = "#6fb0e6"; c.beginPath(); c.arc(55, 78, 9, 0, Math.PI * 2); c.fill();
   c.fillStyle = "#3a2410";
   c.beginPath(); c.moveTo(44, 146); c.lineTo(44, 104); c.arc(55, 104, 11, Math.PI, 0); c.lineTo(66, 146); c.closePath(); c.fill();
+  return cv;
+}
+
+// ---- generic themed dwellings (tiers 1..6) for non-knight factions ----
+function diamond(c: CanvasRenderingContext2D, cx: number, cy: number, rad: number, col: string): void {
+  c.fillStyle = col;
+  c.beginPath();
+  c.moveTo(cx, cy - rad); c.lineTo(cx + rad, cy); c.lineTo(cx, cy + rad); c.lineTo(cx - rad, cy);
+  c.closePath(); c.fill();
+}
+
+function genHut(col: DwellingColors): HTMLCanvasElement {
+  const { cv, c } = mk(90, 90);
+  shadow(c, 45, 86, 36);
+  r(c, 22, 50, 46, 36, col.wall);
+  r(c, 22, 50, 46, 5, col.accent);
+  tri(c, 12, 52, 45, 18, 78, 52, col.roof);
+  r(c, 39, 64, 12, 22, col.dark); // door
+  r(c, 26, 58, 9, 9, col.accent); // window
+  return cv;
+}
+
+function genTower(col: DwellingColors): HTMLCanvasElement {
+  const { cv, c } = mk(100, 95);
+  shadow(c, 50, 91, 36);
+  r(c, 36, 28, 30, 62, col.wall);
+  r(c, 36, 28, 6, 62, col.accent);
+  tri(c, 28, 30, 51, 6, 74, 30, col.roof);
+  for (let i = 0; i < 3; i++) r(c, 46, 40 + i * 16, 10, 9, col.dark); // window slits
+  // banner
+  r(c, 50, 0, 3, 8, col.dark);
+  c.fillStyle = col.accent;
+  c.beginPath(); c.moveTo(53, 0); c.lineTo(64, 3); c.lineTo(53, 7); c.closePath(); c.fill();
+  return cv;
+}
+
+function genHall(col: DwellingColors): HTMLCanvasElement {
+  const { cv, c } = mk(110, 100);
+  shadow(c, 55, 96, 46);
+  r(c, 22, 48, 66, 48, col.wall);
+  r(c, 22, 48, 66, 6, col.accent);
+  tri(c, 14, 50, 55, 20, 96, 50, col.roof);
+  r(c, 47, 70, 16, 26, col.dark); // door
+  diamond(c, 55, 62, 9, col.accent); // emblem
+  return cv;
+}
+
+function genKeep(col: DwellingColors): HTMLCanvasElement {
+  const { cv, c } = mk(110, 105);
+  shadow(c, 55, 101, 48);
+  // central wall
+  r(c, 30, 50, 50, 50, col.wall);
+  r(c, 30, 50, 50, 6, col.accent);
+  tri(c, 24, 52, 55, 24, 86, 52, col.roof);
+  r(c, 47, 76, 16, 24, col.dark);
+  // flanking turrets
+  for (const tx of [10, 78]) {
+    r(c, tx, 58, 22, 42, col.wall);
+    r(c, tx, 58, 5, 42, col.accent);
+    tri(c, tx - 2, 60, tx + 11, 40, tx + 24, 60, col.roof);
+    r(c, tx + 7, 70, 8, 12, col.dark);
+  }
+  return cv;
+}
+
+function genLair(col: DwellingColors): HTMLCanvasElement {
+  const { cv, c } = mk(120, 110);
+  shadow(c, 60, 106, 52);
+  // rocky mound
+  c.fillStyle = col.wall;
+  c.beginPath(); c.moveTo(8, 104); c.lineTo(60, 22); c.lineTo(112, 104); c.closePath(); c.fill();
+  c.fillStyle = shade(col.wall, -0.22);
+  c.beginPath(); c.moveTo(60, 22); c.lineTo(112, 104); c.lineTo(64, 104); c.closePath(); c.fill();
+  // cave mouth
+  c.fillStyle = col.dark;
+  c.beginPath(); c.moveTo(42, 104); c.lineTo(42, 74); c.arc(60, 74, 18, Math.PI, 0); c.lineTo(78, 104); c.closePath(); c.fill();
+  // glowing eyes / torches
+  r(c, 50, 80, 5, 5, col.accent);
+  r(c, 65, 80, 5, 5, col.accent);
+  return cv;
+}
+
+function genTemple(col: DwellingColors): HTMLCanvasElement {
+  const { cv, c } = mk(110, 150);
+  shadow(c, 55, 146, 46);
+  r(c, 30, 58, 50, 88, col.wall);
+  r(c, 30, 58, 50, 8, col.accent);
+  tri(c, 22, 60, 55, 12, 88, 60, col.roof);
+  // spire
+  r(c, 53, 0, 4, 14, col.dark);
+  diamond(c, 55, 4, 6, col.accent);
+  // great doors + emblem
+  c.fillStyle = col.dark;
+  c.beginPath(); c.moveTo(44, 146); c.lineTo(44, 102); c.arc(55, 102, 11, Math.PI, 0); c.lineTo(66, 146); c.closePath(); c.fill();
+  diamond(c, 55, 80, 11, col.accent);
   return cv;
 }

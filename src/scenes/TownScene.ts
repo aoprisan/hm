@@ -7,10 +7,12 @@ import { Scene } from "../engine/scene";
 import { Renderer } from "../engine/renderer";
 import { Input } from "../engine/input";
 import { Sfx } from "../engine/audio";
-import { BUILDINGS, BUILDING_ORDER, BuildingId } from "../data/buildings";
+import { BuildingId } from "../data/buildings";
+import { factionBuildings, factionOrder } from "../data/factions";
 import { CREATURES, CreatureId } from "../data/creatures";
 import { RESOURCE_ORDER, RESOURCE_LABEL, ResourceKind } from "../data/resources";
 import { build, canBuild, recruit, maxAffordable, sellResource, SELL_RATE } from "../game/economy";
+import { Army, transferStack } from "../game/army";
 import { townBackground, buildingArt } from "../art/sprites_town";
 import { creatureSprite } from "../art/sprites_creatures";
 import { resourceIcon } from "../art/sprites_ui";
@@ -29,7 +31,7 @@ type Modal =
 
 interface Layout {
   vw: number; vh: number;
-  topH: number; armyH: number;
+  topH: number; armyH: number; rowH: number;
   region: Rect;          // where the town art is drawn (clipped)
   scale: number;
   offX: number; offY: number; // art top-left in screen space (after pan)
@@ -45,16 +47,28 @@ export class TownScene implements Scene {
   private camX = 0;
   private camY = 0;
   private centered = false;
+  // selected army slot for garrison<->hero transfer (only when a hero is here)
+  private selected: { side: "hero" | "garrison"; idx: number } | null = null;
 
   constructor(private app: App) {}
   private get state() { return this.app.state; }
   private get r(): Renderer { return this.app.renderer; }
+  private get buildings() { return factionBuildings(this.state.town.faction); }
+  private get order() { return factionOrder(this.state.town.faction); }
+  // Is the hero standing on/adjacent to the town? Only then can troops be moved
+  // between the hero and the garrison; otherwise the town is managed solo.
+  private get heroHere(): boolean {
+    const h = this.state.hero, t = this.state.town;
+    return Math.max(Math.abs(h.x - t.x), Math.abs(h.y - t.y)) <= 1;
+  }
 
   private layout(): Layout {
     const r = this.r;
     const vw = r.vw, vh = r.vh;
     const topH = HUD_H;
-    const armyH = Math.round(Math.min(108, Math.max(84, vh * 0.16)));
+    const rowH = Math.round(Math.min(108, Math.max(84, vh * 0.16)));
+    // two army rows (garrison + hero) when a hero is present, otherwise one.
+    const armyH = this.heroHere ? rowH * 2 : rowH;
     const region: Rect = { x: 0, y: topH, w: vw, h: vh - topH - armyH };
     // "cover" fit so buildings stay sizeable; cap zoom on large screens.
     const scale = Math.min(1.6, Math.max(region.w / DESIGN_W, region.h / DESIGN_H));
@@ -65,13 +79,13 @@ export class TownScene implements Scene {
     this.camY = Math.max(0, Math.min(scrollH, this.camY));
     const offX = region.x + (scrollW > 0 ? -this.camX : (region.w - tw) / 2);
     const offY = region.y + (scrollH > 0 ? -this.camY : (region.h - th) / 2);
-    const btnLeave: Button = { x: vw - 132, y: vh - armyH + (armyH - 44) / 2, w: 120, h: 44, label: "Leave" };
-    return { vw, vh, topH, armyH, region, scale, offX, offY, scrollW, scrollH, btnLeave };
+    const btnLeave: Button = { x: vw - 132, y: vh - rowH + (rowH - 44) / 2, w: 120, h: 44, label: "Leave" };
+    return { vw, vh, topH, armyH, rowH, region, scale, offX, offY, scrollW, scrollH, btnLeave };
   }
 
   private buildingRect(L: Layout, id: BuildingId): Rect {
-    const b = BUILDINGS[id];
-    const art = buildingArt(id);
+    const b = this.buildings[id];
+    const art = buildingArt(id, this.state.town.faction);
     return {
       x: L.offX + (b.anchor.x - art.width / 2) * L.scale,
       y: L.offY + (b.anchor.y - art.height) * L.scale,
@@ -90,7 +104,7 @@ export class TownScene implements Scene {
     const p = input.pointer;
     this.hover = null;
     if (!this.modal && pointInRect(p.x, p.y, L.region) && !input.isDragging) {
-      for (const id of [...BUILDING_ORDER].reverse()) {
+      for (const id of [...this.order].reverse()) {
         if (pointInRect(p.x, p.y, this.buildingRect(L, id))) { this.hover = id; break; }
       }
     }
@@ -102,8 +116,9 @@ export class TownScene implements Scene {
     Sfx.click();
     if (this.modal) { this.handleModalClick(px, py); return; }
     if (pointInRect(px, py, L.btnLeave)) { this.app.toAdventure(); return; }
+    if (this.handleArmyClick(L, px, py)) return;
     if (!pointInRect(px, py, L.region)) return;
-    for (const id of [...BUILDING_ORDER].reverse()) {
+    for (const id of [...this.order].reverse()) {
       if (!pointInRect(px, py, this.buildingRect(L, id))) continue;
       this.openBuilding(id);
       return;
@@ -111,7 +126,7 @@ export class TownScene implements Scene {
   }
 
   private openBuilding(id: BuildingId): void {
-    const b = BUILDINGS[id];
+    const b = this.buildings[id];
     if (!this.state.town.built.has(id)) { this.modal = { kind: "build", id }; return; }
     if (b.dwelling) { this.modal = { kind: "recruit", cid: b.dwelling, qty: 1 }; return; }
     if (b.enablesMarket) { this.modal = { kind: "market" }; return; }
@@ -145,8 +160,9 @@ export class TownScene implements Scene {
       out.push({ rect: { x: x + 120, y: qy, w: 48, h: qh }, label: "+", act: () => (m.qty = Math.min(Math.max(1, maxN), m.qty + 1)) });
       out.push({ rect: { x: x + 176, y: qy, w: 64, h: qh }, label: "Max", act: () => (m.qty = Math.max(1, maxN)) });
       const half = (w - 48) / 2;
+      const target = this.heroHere ? this.state.hero.army : this.state.town.garrison;
       out.push({ rect: { x: x + 16, y: by, w: half, h: bh }, label: "Recruit", primary: true, enabled: maxN > 0, act: () => {
-        if (recruit(this.state, m.cid, m.qty, this.state.hero.army)) { Sfx.coin(); this.modal = null; } } });
+        if (recruit(this.state, m.cid, m.qty, target)) { Sfx.coin(); this.modal = null; } } });
       out.push({ rect: { x: x + 32 + half, y: by, w: half, h: bh }, label: "Close", act: () => (this.modal = null) });
     } else if (m.kind === "market") {
       RESOURCE_ORDER.filter((k) => k !== "gold").forEach((k, i) => {
@@ -181,8 +197,8 @@ export class TownScene implements Scene {
     ctx.rect(L.region.x, L.region.y, L.region.w, L.region.h);
     ctx.clip();
     const tw = Math.round(DESIGN_W * L.scale), th = Math.round(DESIGN_H * L.scale);
-    ctx.drawImage(townBackground(tw, th), Math.round(L.offX), Math.round(L.offY));
-    for (const id of BUILDING_ORDER) this.drawBuilding(ctx, L, id);
+    ctx.drawImage(townBackground(tw, th, this.state.town.faction), Math.round(L.offX), Math.round(L.offY));
+    for (const id of this.order) this.drawBuilding(ctx, L, id);
     ctx.restore();
 
     // title banner
@@ -190,7 +206,7 @@ export class TownScene implements Scene {
     panel(ctx, L.vw / 2 - bannerW / 2, L.topH + 8, bannerW, 34, "#6b4a24", "#8a6432", "#3a2410");
     textShadow(ctx, this.state.town.name, L.vw / 2, L.topH + 31, "#fff0c8", "bold 20px 'Trebuchet MS'", "center");
 
-    this.drawArmyStrip(ctx, L);
+    this.drawArmies(ctx, L);
     drawResourceBar(ctx, this.state, 0, 0, L.vw, L.topH);
     button(ctx, L.btnLeave, false);
 
@@ -199,7 +215,7 @@ export class TownScene implements Scene {
   }
 
   private drawBuilding(ctx: CanvasRenderingContext2D, L: Layout, id: BuildingId): void {
-    const art = buildingArt(id);
+    const art = buildingArt(id, this.state.town.faction);
     const rect = this.buildingRect(L, id);
     const built = this.state.town.built.has(id);
     if (!built) {
@@ -221,7 +237,7 @@ export class TownScene implements Scene {
   }
 
   private drawTooltip(ctx: CanvasRenderingContext2D, L: Layout, id: BuildingId): void {
-    const b = BUILDINGS[id];
+    const b = this.buildings[id];
     const built = this.state.town.built.has(id);
     const lines = [b.name, built ? b.desc : `Cost: ${costStr(b.cost)}`];
     const w = 240;
@@ -232,28 +248,94 @@ export class TownScene implements Scene {
     wrapText(ctx, lines[1], x + 12, y + 40, w - 24, 16, "#3a2410", "12px 'Trebuchet MS'");
   }
 
-  private drawArmyStrip(ctx: CanvasRenderingContext2D, L: Layout): void {
-    const y = L.vh - L.armyH;
-    panel(ctx, 0, y, L.vw, L.armyH);
-    text(ctx, "Hero's Army", 16, y + 22, "#fff0c8", "bold 14px 'Trebuchet MS'");
-    const leaveLeft = L.btnLeave.x - 12;
+  // ---- army strips (garrison + hero) and troop transfer ----
+  private armyFor(side: "hero" | "garrison"): Army {
+    return side === "garrison" ? this.state.town.garrison : this.state.hero.army;
+  }
+  private garrisonRowY(L: Layout): number { return L.vh - L.armyH; }
+  private heroRowY(L: Layout): number { return L.vh - L.rowH; }
+
+  // Five evenly-spaced slot rects for a strip whose panel starts at rowY.
+  private rowSlots(L: Layout, rowY: number): Rect[] {
     const cols = 5;
+    const leaveLeft = L.btnLeave.x - 12;
     const avail = leaveLeft - 16;
     const slotW = Math.min(96, (avail - (cols - 1) * 8) / cols);
-    const sy = y + 30;
+    const sy = rowY + 30;
+    const out: Rect[] = [];
     for (let i = 0; i < cols; i++) {
       const sx = 16 + i * (slotW + 8);
       if (sx + slotW > leaveLeft) break;
-      panel(ctx, sx, sy, slotW, L.armyH - 40, "#5b4a36", "#6a5a44", "#2a1d10");
-      const s = this.state.hero.army[i];
+      out.push({ x: sx, y: sy, w: slotW, h: L.rowH - 40 });
+    }
+    return out;
+  }
+
+  private drawArmies(ctx: CanvasRenderingContext2D, L: Layout): void {
+    this.drawStrip(ctx, L, "garrison", this.garrisonRowY(L));
+    if (this.heroHere) this.drawStrip(ctx, L, "hero", this.heroRowY(L));
+    if (this.state.town.builtToday) {
+      text(ctx, "Built today", L.btnLeave.x - 4, this.heroRowY(L) + 22, "#e8a0a0", "12px 'Trebuchet MS'", "right");
+    }
+  }
+
+  private drawStrip(ctx: CanvasRenderingContext2D, L: Layout, side: "hero" | "garrison", rowY: number): void {
+    panel(ctx, 0, rowY, L.vw, L.rowH);
+    const label = side === "garrison" ? "Garrison" : "Hero's Army";
+    text(ctx, label, 16, rowY + 22, "#fff0c8", "bold 14px 'Trebuchet MS'");
+    if (side === "garrison" && this.heroHere) {
+      text(ctx, "tap a stack, then a slot in the other row to move it",
+        140, rowY + 22, "#b7a884", "11px 'Trebuchet MS'");
+    }
+    const army = this.armyFor(side);
+    const slots = this.rowSlots(L, rowY);
+    for (let i = 0; i < slots.length; i++) {
+      const sl = slots[i];
+      panel(ctx, sl.x, sl.y, sl.w, sl.h, "#5b4a36", "#6a5a44", "#2a1d10");
+      const s = army[i];
       if (s && s.count > 0) {
         const spr = creatureSprite(s.id);
-        spr.drawCenteredBottom(ctx, sx + 22, sy + L.armyH - 46, 2);
-        text(ctx, CREATURES[s.id].name, sx + 38, sy + 16, "#fff0c8", "10px 'Trebuchet MS'");
-        text(ctx, `x${s.count}`, sx + 38, sy + 32, "#f2c44d", "bold 13px 'Trebuchet MS'");
+        spr.drawCenteredBottom(ctx, sl.x + 22, sl.y + sl.h - 6, 2);
+        text(ctx, CREATURES[s.id].name, sl.x + 38, sl.y + 16, "#fff0c8", "10px 'Trebuchet MS'");
+        text(ctx, `x${s.count}`, sl.x + 38, sl.y + 32, "#f2c44d", "bold 13px 'Trebuchet MS'");
+      }
+      if (this.selected && this.selected.side === side && this.selected.idx === i) {
+        ctx.strokeStyle = "#f2c44d";
+        ctx.lineWidth = 3;
+        ctx.strokeRect(sl.x + 1, sl.y + 1, sl.w - 2, sl.h - 2);
       }
     }
-    if (this.state.town.builtToday) text(ctx, "Built today", L.btnLeave.x - 4, y + 22, "#e8a0a0", "12px 'Trebuchet MS'", "right");
+  }
+
+  // Returns true if the tap hit an army slot (and was handled).
+  private handleArmyClick(L: Layout, px: number, py: number): boolean {
+    const rows: { side: "hero" | "garrison"; rowY: number }[] = [
+      { side: "garrison", rowY: this.garrisonRowY(L) },
+    ];
+    if (this.heroHere) rows.push({ side: "hero", rowY: this.heroRowY(L) });
+    for (const row of rows) {
+      const slots = this.rowSlots(L, row.rowY);
+      for (let i = 0; i < slots.length; i++) {
+        if (pointInRect(px, py, slots[i])) { this.onSlotTap(row.side, i); return true; }
+      }
+    }
+    return false;
+  }
+
+  private onSlotTap(side: "hero" | "garrison", idx: number): void {
+    // Transfers need a hero present (two armies to move between).
+    if (!this.heroHere) { this.selected = null; return; }
+    const sel = this.selected;
+    if (sel && sel.side !== side) {
+      const from = this.armyFor(sel.side);
+      const moving = from[sel.idx];
+      if (moving) transferStack(from, sel.idx, this.armyFor(side), moving.count);
+      this.selected = null;
+      return;
+    }
+    if (sel && sel.side === side && sel.idx === idx) { this.selected = null; return; }
+    const s = this.armyFor(side)[idx];
+    this.selected = s && s.count > 0 ? { side, idx } : null;
   }
 
   // ---- modals ----
@@ -275,9 +357,9 @@ export class TownScene implements Scene {
   }
 
   private drawBuildModal(ctx: CanvasRenderingContext2D, box: Rect, id: BuildingId): void {
-    const b = BUILDINGS[id];
+    const b = this.buildings[id];
     const { x, y, w } = box;
-    ctx.drawImage(buildingArt(id), x + 20, y + 20, 96, 96);
+    ctx.drawImage(buildingArt(id, this.state.town.faction), x + 20, y + 20, 96, 96);
     textShadow(ctx, b.name, x + 128, y + 44, "#5b2a10", "bold 21px 'Trebuchet MS'");
     wrapText(ctx, b.desc, x + 128, y + 70, w - 148, 20, "#3a2410", "14px 'Trebuchet MS'");
     text(ctx, "Cost:", x + 24, y + 150, "#5b3a1a", "bold 14px 'Trebuchet MS'");

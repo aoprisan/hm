@@ -1,23 +1,30 @@
-// Castle build tree for the Knight town. Each building has a cost, prerequisites,
-// and data-driven effects the economy/town logic reads (gold/day, growth bonus,
-// or a dwelling that unlocks a creature for recruitment).
+// Town build tree. The 7 non-dwelling buildings are faction-agnostic *roles*
+// (townHall, statue, well, marketplace, tavern, mageGuild, castle) shared by
+// every faction. The 6 dwellings are generic role ids (dwelling1..dwelling6)
+// whose name/description/recruited-creature differ per faction; their cost,
+// prerequisites and town-art anchor come from a shared template so every
+// faction reuses the same six build slots. See data/factions.ts.
 import { CreatureId } from "./creatures";
 import { ResourceBag, bag } from "./resources";
 
-export type BuildingId =
+export type SharedBuildingId =
   | "townHall"
   | "statue"
   | "well"
   | "marketplace"
   | "tavern"
   | "mageGuild"
-  | "castle"
-  | "thatchedHut"
-  | "archeryRange"
-  | "blacksmith"
-  | "armory"
-  | "joustingArena"
-  | "cathedral";
+  | "castle";
+
+export type DwellingId =
+  | "dwelling1"
+  | "dwelling2"
+  | "dwelling3"
+  | "dwelling4"
+  | "dwelling5"
+  | "dwelling6";
+
+export type BuildingId = SharedBuildingId | DwellingId;
 
 export interface Building {
   id: BuildingId;
@@ -33,7 +40,8 @@ export interface Building {
   dwelling?: CreatureId; // if set, this is a creature dwelling
 }
 
-export const BUILDINGS: Record<BuildingId, Building> = {
+// The 7 shared, faction-agnostic buildings.
+export const SHARED_BUILDINGS: Record<SharedBuildingId, Building> = {
   townHall: {
     id: "townHall", name: "Town Hall", desc: "Generates 500 gold each day.",
     cost: bag({ gold: 0 }), prereq: [], goldPerDay: 500, anchor: { x: 470, y: 210 },
@@ -62,36 +70,43 @@ export const BUILDINGS: Record<BuildingId, Building> = {
     id: "castle", name: "Castle", desc: "Mighty fortifications. Boosts creature growth.",
     cost: bag({ gold: 5000, wood: 20, ore: 20 }), prereq: ["townHall"], growthBonus: 1, anchor: { x: 470, y: 120 },
   },
-
-  // ---- dwellings ----
-  thatchedHut: {
-    id: "thatchedHut", name: "Thatched Hut", desc: "Recruit Peasants.",
-    cost: bag({ gold: 200 }), prereq: ["townHall"], dwelling: "peasant", anchor: { x: 110, y: 470 },
-  },
-  archeryRange: {
-    id: "archeryRange", name: "Archery Range", desc: "Recruit Archers.",
-    cost: bag({ gold: 1000, wood: 5 }), prereq: ["thatchedHut"], dwelling: "archer", anchor: { x: 270, y: 500 },
-  },
-  blacksmith: {
-    id: "blacksmith", name: "Blacksmith", desc: "Recruit Pikemen.",
-    cost: bag({ gold: 1000, wood: 5, ore: 5 }), prereq: ["archeryRange"], dwelling: "pikeman", anchor: { x: 430, y: 510 },
-  },
-  armory: {
-    id: "armory", name: "Armory", desc: "Recruit Swordsmen.",
-    cost: bag({ gold: 1500, wood: 10, ore: 10 }), prereq: ["blacksmith"], dwelling: "swordsman", anchor: { x: 590, y: 510 },
-  },
-  joustingArena: {
-    id: "joustingArena", name: "Jousting Arena", desc: "Recruit Cavalry.",
-    cost: bag({ gold: 3000, ore: 20 }), prereq: ["armory"], dwelling: "cavalry", anchor: { x: 750, y: 500 },
-  },
-  cathedral: {
-    id: "cathedral", name: "Cathedral", desc: "Recruit holy Paladins.",
-    cost: bag({ gold: 5000, wood: 20, ore: 20 }), prereq: ["joustingArena", "castle"], dwelling: "paladin", anchor: { x: 900, y: 470 },
-  },
 };
 
-// Display order for the town build menu.
+// Shared cost / prerequisite / anchor template for the six dwelling tiers. Each
+// faction supplies only the per-tier name/desc/creature (see DwellingSpec).
+interface DwellingTemplate { cost: ResourceBag; prereq: BuildingId[]; anchor: { x: number; y: number }; }
+const DWELLING_TEMPLATE: DwellingTemplate[] = [
+  { cost: bag({ gold: 200 }), prereq: ["townHall"], anchor: { x: 110, y: 470 } },
+  { cost: bag({ gold: 1000, wood: 5 }), prereq: ["dwelling1"], anchor: { x: 270, y: 500 } },
+  { cost: bag({ gold: 1000, wood: 5, ore: 5 }), prereq: ["dwelling2"], anchor: { x: 430, y: 510 } },
+  { cost: bag({ gold: 1500, wood: 10, ore: 10 }), prereq: ["dwelling3"], anchor: { x: 590, y: 510 } },
+  { cost: bag({ gold: 3000, ore: 20 }), prereq: ["dwelling4"], anchor: { x: 750, y: 500 } },
+  { cost: bag({ gold: 5000, wood: 20, ore: 20 }), prereq: ["dwelling5", "castle"], anchor: { x: 900, y: 470 } },
+];
+
+export const DWELLING_ANCHORS = DWELLING_TEMPLATE.map((t) => t.anchor);
+export const DWELLING_IDS: DwellingId[] = ["dwelling1", "dwelling2", "dwelling3", "dwelling4", "dwelling5", "dwelling6"];
+
+// One per dwelling tier (tier 1..6), provided by each faction.
+export interface DwellingSpec { name: string; desc: string; dwelling: CreatureId; }
+
+// Merge the shared buildings with a faction's six dwellings into one lookup.
+export function buildFactionBuildings(specs: DwellingSpec[]): Record<BuildingId, Building> {
+  const out: Record<BuildingId, Building> = { ...SHARED_BUILDINGS } as Record<BuildingId, Building>;
+  specs.forEach((s, i) => {
+    const id = DWELLING_IDS[i];
+    const t = DWELLING_TEMPLATE[i];
+    out[id] = {
+      id, name: s.name, desc: s.desc,
+      cost: t.cost, prereq: t.prereq, anchor: t.anchor, dwelling: s.dwelling,
+    };
+  });
+  return out;
+}
+
+// Display order for the town build menu (identical across factions since ids
+// are generic roles).
 export const BUILDING_ORDER: BuildingId[] = [
   "castle", "statue", "well", "marketplace", "tavern", "mageGuild",
-  "thatchedHut", "archeryRange", "blacksmith", "armory", "joustingArena", "cathedral",
+  "dwelling1", "dwelling2", "dwelling3", "dwelling4", "dwelling5", "dwelling6",
 ];
