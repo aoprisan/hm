@@ -64,3 +64,16 @@ export function cleanupArmy(army: Army): void {
     if (s && s.count <= 0) army[i] = null;
   }
 }
+
+// Move up to `count` creatures from `from[fromIdx]` into `to` (merging/finding a
+// free slot). Returns false if the source slot is empty or `to` has no room.
+export function transferStack(from: Army, fromIdx: number, to: Army, count: number): boolean {
+  const s = from[fromIdx];
+  if (!s || s.count <= 0) return false;
+  const move = Math.max(0, Math.min(count, s.count));
+  if (move <= 0) return false;
+  if (!addToArmy(to, s.id, move)) return false; // no room in target — leave source untouched
+  s.count -= move;
+  cleanupArmy(from);
+  return true;
+}

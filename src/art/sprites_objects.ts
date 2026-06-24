@@ -4,6 +4,7 @@
 import { PixelSprite } from "./pixelsprite";
 import { ResourceKind } from "../data/resources";
 import { Owner } from "../game/map";
+import { FactionId, FACTIONS } from "../data/factions";
 
 function cv(w: number, h: number): { cv: HTMLCanvasElement; c: CanvasRenderingContext2D } {
   const el = document.createElement("canvas");
@@ -37,12 +38,14 @@ export const heroSprite = new PixelSprite([
 ]);
 
 // ---------- Castle ----------
-export function castleSprite(owner: Owner): HTMLCanvasElement {
+export function castleSprite(owner: Owner, faction?: FactionId): HTMLCanvasElement {
   const { cv: el, c } = cv(88, 80);
   const flag = owner === "enemy" ? "#c8413a" : owner === "player" ? "#3f78c8" : "#9b938a";
   const stone = "#b8b0a2";
   const stoneDk = "#7d756a";
-  const roof = owner === "enemy" ? "#8f2b27" : "#28548f";
+  // Faction themes the roofs; owner still drives the flag color.
+  const roof = faction ? FACTIONS[faction].palette.roofPrimary
+    : owner === "enemy" ? "#8f2b27" : "#28548f";
   // ground shadow
   c.fillStyle = "rgba(0,0,0,0.25)";
   c.beginPath();
@@ -105,7 +108,7 @@ export function castleSprite(owner: Owner): HTMLCanvasElement {
 }
 
 // ---------- Enemy stronghold (dark tower) ----------
-export function strongholdSprite(): HTMLCanvasElement {
+export function strongholdSprite(faction?: FactionId): HTMLCanvasElement {
   const { cv: el, c } = cv(64, 80);
   c.fillStyle = "rgba(0,0,0,0.3)";
   c.beginPath();
@@ -113,6 +116,7 @@ export function strongholdSprite(): HTMLCanvasElement {
   c.fill();
   const dk = "#5f574c";
   const dkk = "#3f3a33";
+  const spire = faction ? FACTIONS[faction].palette.roofPrimary : "#8f2b27";
   r(c, 18, 22, 28, 54, dk);
   r(c, 18, 22, 5, 54, "#6b645c");
   r(c, 41, 22, 5, 54, dkk);
@@ -121,7 +125,7 @@ export function strongholdSprite(): HTMLCanvasElement {
   r(c, 24, 34, 5, 8, "#c8413a");
   r(c, 36, 34, 5, 8, "#c8413a");
   // jagged spire
-  c.fillStyle = "#8f2b27";
+  c.fillStyle = spire;
   c.beginPath();
   c.moveTo(32, 2);
   c.lineTo(46, 20);

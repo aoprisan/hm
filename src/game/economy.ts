@@ -1,6 +1,7 @@
 // Economy: daily income, weekly creature growth, building, recruiting, trading.
 import { GameState } from "./state";
-import { BUILDINGS, BuildingId } from "../data/buildings";
+import { BuildingId } from "../data/buildings";
+import { factionBuildings } from "../data/factions";
 import { CREATURES, CreatureId } from "../data/creatures";
 import {
   ResourceBag, ResourceKind, addBag, bag, canAfford, pay,
@@ -19,8 +20,9 @@ export function mineYield(kind: ResourceKind): Partial<ResourceBag> {
 
 export function dailyIncome(state: GameState): ResourceBag {
   const income = bag({});
+  const B = factionBuildings(state.town.faction);
   for (const id of state.town.built) {
-    const b = BUILDINGS[id];
+    const b = B[id];
     if (b.goldPerDay) income.gold += b.goldPerDay;
   }
   for (const o of state.map.objects) {
@@ -32,15 +34,17 @@ export function dailyIncome(state: GameState): ResourceBag {
 }
 
 function growthBonus(state: GameState): number {
+  const B = factionBuildings(state.town.faction);
   let bonus = 0;
-  for (const id of state.town.built) bonus += BUILDINGS[id].growthBonus ?? 0;
+  for (const id of state.town.built) bonus += B[id].growthBonus ?? 0;
   return bonus;
 }
 
 export function applyWeeklyGrowth(state: GameState): void {
+  const B = factionBuildings(state.town.faction);
   const bonus = growthBonus(state);
   for (const id of state.town.built) {
-    const b = BUILDINGS[id];
+    const b = B[id];
     if (!b.dwelling) continue;
     const c = CREATURES[b.dwelling];
     const grow = c.growth + bonus;
@@ -61,11 +65,12 @@ export function endTurn(state: GameState): void {
 
 // ---- Building ----
 export function canBuild(state: GameState, id: BuildingId): { ok: boolean; reason?: string } {
-  const b = BUILDINGS[id];
+  const B = factionBuildings(state.town.faction);
+  const b = B[id];
   if (state.town.built.has(id)) return { ok: false, reason: "Already built" };
   if (state.town.builtToday) return { ok: false, reason: "Already built today" };
   for (const p of b.prereq) {
-    if (!state.town.built.has(p)) return { ok: false, reason: `Requires ${BUILDINGS[p].name}` };
+    if (!state.town.built.has(p)) return { ok: false, reason: `Requires ${B[p].name}` };
   }
   if (!canAfford(state.resources, b.cost)) return { ok: false, reason: "Not enough resources" };
   return { ok: true };
@@ -73,7 +78,7 @@ export function canBuild(state: GameState, id: BuildingId): { ok: boolean; reaso
 
 export function build(state: GameState, id: BuildingId): boolean {
   if (!canBuild(state, id).ok) return false;
-  const b = BUILDINGS[id];
+  const b = factionBuildings(state.town.faction)[id];
   pay(state.resources, b.cost);
   state.town.built.add(id);
   state.town.builtToday = true;

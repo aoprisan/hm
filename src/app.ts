@@ -10,7 +10,9 @@ import { Stack } from "./game/army";
 import { buildMap1 } from "./data/map1";
 import { freshTown } from "./game/state";
 import { CREATURES } from "./data/creatures";
+import { FactionId, FACTIONS, otherFaction } from "./data/factions";
 
+import { MenuScene } from "./scenes/MenuScene";
 import { AdventureScene } from "./scenes/AdventureScene";
 import { TownScene } from "./scenes/TownScene";
 import { BattleScene, BattleOutcome } from "./scenes/BattleScene";
@@ -24,19 +26,22 @@ export class App {
   constructor(renderer: Renderer, input: Input) {
     this.renderer = renderer;
     this.input = input;
-    this.newGame();
+    this.toMenu();
   }
 
-  newGame(): void {
-    const { map, startX, startY } = buildMap1();
-    const town = freshTown(5, 20);
-    const startArmy: Stack[] = [
-      { id: "peasant", count: 20 },
-      { id: "archer", count: 6 },
-    ];
-    const hero = new Hero("Sir Roland", startX, startY, startArmy, 2, 2);
+  toMenu(): void {
+    this.scenes.replace(new MenuScene(this));
+  }
+
+  newGame(factionId: FactionId): void {
+    const enemyId = otherFaction(factionId);
+    const { map, castle, startX, startY } = buildMap1(factionId, enemyId);
+    const f = FACTIONS[factionId];
+    const town = freshTown(castle.x, castle.y, factionId);
+    const startArmy: Stack[] = f.startArmy.map((s) => ({ ...s }));
+    const hero = new Hero(f.heroName, startX, startY, startArmy, 2, 2);
     this.state = new GameState(map, hero, town);
-    this.state.pushLog("Sir Roland sets out from Sunhaven.");
+    this.state.pushLog(`${f.heroName} sets out from ${town.name}.`);
     this.scenes.replace(new AdventureScene(this));
   }
 

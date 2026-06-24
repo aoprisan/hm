@@ -129,11 +129,6 @@ export class AdventureScene implements Scene {
     };
   }
 
-  private castleAdjacent(): boolean {
-    const h = this.state.hero, t = this.state.town;
-    return Math.max(Math.abs(h.x - t.x), Math.abs(h.y - t.y)) <= 1;
-  }
-
   // ---------------- update ----------------
   update(dt: number, input: Input): void {
     const L = this.layout();
@@ -189,7 +184,7 @@ export class AdventureScene implements Scene {
 
     if (this.state.phase !== "playing") {
       const b = this.endScreenButton(L);
-      if (pointInRect(px, py, b)) this.app.newGame();
+      if (pointInRect(px, py, b)) this.app.toMenu();
       return;
     }
 
@@ -215,8 +210,8 @@ export class AdventureScene implements Scene {
     if (pointInRect(px, py, L.btnArmy)) { this.sheetOpen = true; return; }
     if (pointInRect(px, py, L.btnEnd)) { this.doEndTurn(); return; }
     if (pointInRect(px, py, L.btnCastle)) {
-      if (this.castleAdjacent()) this.app.openTown();
-      else this.flash("March next to your castle to visit it.");
+      // It's your own town — you can manage its garrison anytime, hero or not.
+      this.app.openTown();
       return;
     }
 
@@ -358,10 +353,11 @@ export class AdventureScene implements Scene {
   }
 
   private handleStronghold(o: MapObject, fromX: number, fromY: number): void {
+    const keepName = o.name ?? "the enemy keep";
     this.fightThen(o.guard ?? [], o.name ?? "Stronghold", (won) => {
       if (won) {
         this.state.phase = "won";
-        this.state.pushLog("Dragon's Keep has fallen! Victory!");
+        this.state.pushLog(`${keepName} has fallen! Victory!`);
         Sfx.win();
       } else {
         this.state.hero.x = fromX; this.state.hero.y = fromY;
@@ -459,8 +455,8 @@ export class AdventureScene implements Scene {
     const bottom = sy + TILE - 2;
     const blit = (img: HTMLCanvasElement) => ctx.drawImage(img, Math.round(cx - img.width / 2), Math.round(bottom - img.height));
     switch (o.type) {
-      case "castle": blit(castleSprite(o.owner ?? "player")); break;
-      case "stronghold": blit(strongholdSprite()); break;
+      case "castle": blit(castleSprite(o.owner ?? "player", o.faction)); break;
+      case "stronghold": blit(strongholdSprite(o.faction)); break;
       case "mine":
         blit(mineSprite(o.mineKind!));
         ctx.drawImage(flagSprite(o.owner ?? "neutral"), Math.round(cx + 12), Math.round(bottom - 40));
@@ -541,7 +537,7 @@ export class AdventureScene implements Scene {
     const playing = this.state.phase === "playing";
     L.btnArmy.enabled = playing;
     L.btnEnd.enabled = playing;
-    L.btnCastle.enabled = playing && this.castleAdjacent();
+    L.btnCastle.enabled = playing;
     button(ctx, L.btnArmy, false);
     button(ctx, L.btnEnd, false);
     button(ctx, L.btnCastle, false);
@@ -676,7 +672,7 @@ export class AdventureScene implements Scene {
     textShadow(ctx, won ? "VICTORY!" : "DEFEAT", L.vw / 2, L.vh / 2 - 30,
       won ? "#f2e4a0" : "#e8a0a0", `bold ${titleSize}px 'Trebuchet MS'`, "center");
     const sub = won
-      ? "Dragon's Keep is yours. The realm of Sunhaven is safe!"
+      ? `The enemy keep is yours. The realm of ${this.state.town.name} is safe!`
       : "Your hero has fallen. The dark lord prevails...";
     wrapText(ctx, sub, L.vw / 2 - Math.min(220, L.vw / 2 - 16), L.vh / 2 + 8,
       Math.min(440, L.vw - 32), 24, "#f2e4c0", "17px 'Trebuchet MS'");

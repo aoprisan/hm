@@ -2,6 +2,7 @@
 import { TerrainKind, TERRAIN } from "../data/terrain";
 import { ResourceKind } from "../data/resources";
 import { Stack } from "./army";
+import { FactionId } from "../data/factions";
 
 export type Owner = "player" | "enemy" | "neutral";
 
@@ -36,6 +37,7 @@ export interface MapObject {
   text?: string; // signpost text
   visited?: boolean;
   variant?: number; // decorative variation
+  faction?: FactionId; // castle / stronghold castle type (drives its art tint)
 }
 
 export function tileKey(x: number, y: number): number {

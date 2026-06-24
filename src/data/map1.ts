@@ -5,6 +5,7 @@
 import { GameMap, MapObject } from "../game/map";
 import { TerrainKind } from "./terrain";
 import { Stack } from "../game/army";
+import { FactionId, FACTIONS } from "./factions";
 
 export const MAP_W = 36;
 export const MAP_H = 36;
@@ -19,7 +20,10 @@ function seeded(seed: number) {
   };
 }
 
-export function buildMap1(): { map: GameMap; castle: MapObject; stronghold: MapObject; startX: number; startY: number } {
+export function buildMap1(
+  playerFaction: FactionId,
+  enemyFaction: FactionId,
+): { map: GameMap; castle: MapObject; stronghold: MapObject; startX: number; startY: number } {
   const rnd = seeded(20240608);
   const tiles: TerrainKind[] = new Array(MAP_W * MAP_H).fill("grass");
   const set = (x: number, y: number, t: TerrainKind) => {
@@ -89,13 +93,16 @@ export function buildMap1(): { map: GameMap; castle: MapObject; stronghold: MapO
   const guard = (stacks: Stack[]): Stack[] => stacks;
 
   // player castle
-  const castle = place({ type: "castle", x: 5, y: 20, owner: "player", name: "Sunhaven" });
+  const castle = place({
+    type: "castle", x: 5, y: 20, owner: "player",
+    name: FACTIONS[playerFaction].townName, faction: playerFaction,
+  });
   for (const [dx, dy] of [[1, 0], [1, 1], [0, 1], [1, -1]]) clear(5 + dx, 20 + dy);
 
   // signpost hint near the castle
   place({
     type: "sign", x: 7, y: 21,
-    text: "The dark lord's tower lies northeast. Gather strength, brave hero!",
+    text: `The ${FACTIONS[enemyFaction].name} lord's keep lies northeast. Gather strength, brave hero!`,
   });
 
   // mines (each guarded)
@@ -150,13 +157,16 @@ export function buildMap1(): { map: GameMap; castle: MapObject; stronghold: MapO
     if (get(x, y) === "grass") place({ type: "rock", x, y });
   }
 
-  // enemy stronghold — the victory target — guarded by a fearsome host
+  // enemy stronghold — the victory target — guarded by a fearsome host drawn
+  // from the enemy faction's top tiers.
+  const eLine = FACTIONS[enemyFaction].lineup;
   const stronghold = place({
-    type: "stronghold", x: 30, y: 6, owner: "enemy", name: "Dragon's Keep",
+    type: "stronghold", x: 30, y: 6, owner: "enemy",
+    name: `${FACTIONS[enemyFaction].townName} Keep`, faction: enemyFaction,
     guard: guard([
-      { id: "dragon", count: 1 },
-      { id: "troll", count: 6 },
-      { id: "ogre", count: 8 },
+      { id: eLine[5], count: 1 },
+      { id: eLine[4], count: 6 },
+      { id: eLine[3], count: 8 },
     ]),
   });
 
