@@ -83,12 +83,19 @@ trigger it manually from the **Actions** tab via *Run workflow*).
   **Statue**, and **Castle** boost growth and income.
 
 ### Battle (tactical)
-- Stacks act in order of **speed**. On your turn, click a glowing tile to **move**
-  or an enemy to **attack** (melee units must reach an adjacent tile; the **Archer**
-  shoots at range while no enemy is adjacent).
+- Stacks act in order of **speed**, shown in the **turn-order strip** under the
+  top bar so you can plan around who moves next.
+- On your turn, click a glowing tile to **move** or an enemy to **attack** (melee
+  units must reach an adjacent tile — a dashed marker shows where they'll strike
+  from; the **Archer** shoots at range while no enemy is adjacent).
+- Hover an enemy to see a **damage forecast** — estimated damage, how many you
+  may slay, and whether they'll **retaliate**.
 - Melee attacks provoke one **retaliation** per round.
-- **Defend** skips a turn, **Auto Battle** resolves the rest instantly, **Flee**
-  retreats (and loses the engagement).
+- **Boulders** litter the field and block movement — use the lanes and
+  chokepoints to screen your shooters.
+- **Wait** holds a stack to act later in the round (slower waiters go first);
+  **Defend** raises its defense until its next turn; **Auto** resolves the rest
+  instantly; **Flee** retreats (and loses the engagement). Keyboard: `W`/`D`/`A`/`F`.
 
 ### Goal
 Defeat the **Dragon's Keep** in the northeast to win. If your hero's entire army
@@ -113,7 +120,8 @@ src/
   store is scaled by the device pixel ratio for crisp text. Pixel art is drawn
   nearest-neighbor. Every visual is a baked offscreen canvas. Scenes lay out
   against the live `vw`/`vh`/`portrait` rather than fixed constants.
-- **Combat** is "simplified tactical": grid movement + melee/ranged + retaliation,
-  with HOMM2-style damage (`count × dmg × attack/defense multiplier`). No spells,
-  morale, or luck.
+- **Combat** is "simplified tactical": grid movement around obstacles +
+  melee/ranged + one retaliation, a speed-based initiative order, **Wait** and
+  **Defend** stances, and a non-random damage forecast, with HOMM2-style damage
+  (`count × dmg × attack/defense multiplier`). No spells, morale, or luck.
 - **Faction:** the Knight ("Castle") town and its six-tier lineup.

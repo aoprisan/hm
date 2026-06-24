@@ -7,6 +7,7 @@ import { rng } from "./rng";
 
 export const BW = 12; // battle grid width
 export const BH = 9; // battle grid height
+export const DEFEND_BONUS = 3; // defense added while a stack is defending
 
 export type Side = "attacker" | "defender";
 
@@ -25,6 +26,8 @@ export interface BattleUnit {
   ranged: boolean;
   actedThisRound: boolean;
   retaliatedThisRound: boolean;
+  defending: boolean; // chose Defend this round (+DEFEND_BONUS defense)
+  waited: boolean; // chose Wait — acts later in the round
   slot: number; // original army slot, for stable ordering
 }
 
@@ -33,12 +36,20 @@ export interface AttackResult {
   damage: number;
 }
 
+// A non-randomized forecast of an attack, for the UI preview and the AI.
+export interface DamageEstimate {
+  dmgMin: number;
+  dmgMax: number;
+  killMin: number;
+  killMax: number;
+}
+
 export class Battle {
   units: BattleUnit[] = [];
   round = 1;
-  queue: BattleUnit[] = [];
   active: BattleUnit | null = null;
   winner: Side | null = null;
+  obstacles = new Set<number>(); // blocked cells (rocks/boulders) as y*BW+x
 
   constructor(
     attacker: (Stack | null)[],
@@ -50,7 +61,27 @@ export class Battle {
   ) {
     this.placeSide(attacker, "attacker", heroAtk, heroDef, 0, 1);
     this.placeSide(defender, "defender", enemyAtk, enemyDef, BW - 1, BW - 2);
+    this.scatterObstacles();
     this.startRound();
+  }
+
+  // Drop a handful of impassable rocks in the central columns to create lanes
+  // and chokepoints. Kept clear of the armies' deployment columns.
+  private scatterObstacles(): void {
+    const n = rng.int(4, 8);
+    let guard = 0;
+    while (this.obstacles.size < n && guard++ < 200) {
+      const x = rng.int(3, BW - 4);
+      const y = rng.int(0, BH - 1);
+      const k = y * BW + x;
+      if (this.obstacles.has(k)) continue;
+      if (this.unitAt(x, y)) continue;
+      this.obstacles.add(k);
+    }
+  }
+
+  isObstacle(x: number, y: number): boolean {
+    return this.obstacles.has(y * BW + x);
   }
 
   private placeSide(
@@ -80,6 +111,8 @@ export class Battle {
         ranged: c.shots > 0,
         actedThisRound: false,
         retaliatedThisRound: false,
+        defending: false,
+        waited: false,
         slot: i,
       });
     });
@@ -97,30 +130,65 @@ export class Battle {
     for (const u of this.units) {
       u.actedThisRound = false;
       u.retaliatedThisRound = false;
+      u.defending = false;
+      u.waited = false;
     }
-    this.queue = this.units
-      .filter((u) => u.count > 0)
-      .sort((a, b) => b.speed - a.speed || (a.side === "attacker" ? -1 : 1) || a.slot - b.slot);
     this.advance();
+  }
+
+  // The remaining turn order for this round: fast units first, then units that
+  // chose to Wait (slowest of them act first, HOMM2-style). The head is active.
+  private orderPending(): BattleUnit[] {
+    const pending = this.units.filter((u) => u.count > 0 && !u.actedThisRound);
+    const tie = (a: BattleUnit, b: BattleUnit) =>
+      (a.side === "attacker" ? -1 : 1) - (b.side === "attacker" ? -1 : 1) || a.slot - b.slot;
+    const normal = pending.filter((u) => !u.waited).sort((a, b) => b.speed - a.speed || tie(a, b));
+    const waited = pending.filter((u) => u.waited).sort((a, b) => a.speed - b.speed || tie(a, b));
+    return [...normal, ...waited];
+  }
+
+  // The next `limit` stacks to act (active first), for the initiative display.
+  upcoming(limit = 10): BattleUnit[] {
+    return this.orderPending().slice(0, limit);
   }
 
   // Move the pointer to the next living, not-yet-acted unit.
   advance(): void {
     if (this.checkWinner()) { this.active = null; return; }
-    while (this.queue.length) {
-      const u = this.queue.shift()!;
-      if (u.count > 0 && !u.actedThisRound) {
-        this.active = u;
-        return;
-      }
+    const pending = this.orderPending();
+    if (pending.length === 0) {
+      this.round++;
+      this.startRound();
+      return;
     }
-    this.round++;
-    this.startRound();
+    this.active = pending[0];
   }
 
   endActiveTurn(): void {
     if (this.active) this.active.actedThisRound = true;
     this.advance();
+  }
+
+  // Defend: skip acting but gain a defense bonus until this stack's next turn.
+  defendActive(): void {
+    if (this.active) {
+      this.active.defending = true;
+      this.active.actedThisRound = true;
+    }
+    this.advance();
+  }
+
+  // Wait: step aside and act later in the round (cannot wait twice).
+  waitActive(): boolean {
+    const u = this.active;
+    if (!u || u.waited) return false;
+    u.waited = true;
+    this.advance();
+    return true;
+  }
+
+  canWait(u: BattleUnit | null): boolean {
+    return !!u && !u.waited && !u.actedThisRound;
   }
 
   checkWinner(): boolean {
@@ -150,6 +218,7 @@ export class Battle {
           if (nx < 0 || ny < 0 || nx >= BW || ny >= BH) continue;
           const nk = ny * BW + nx;
           if (this.unitAt(nx, ny)) continue; // blocked by a unit
+          if (this.obstacles.has(nk)) continue; // blocked by a rock
           if (dist.has(nk)) continue;
           dist.set(nk, cd + 1);
           out.add(nk);
@@ -190,6 +259,33 @@ export class Battle {
     return 1 / (1 + 0.05 * Math.min(def - atk, 14));
   }
 
+  // Defense including the Defend stance bonus.
+  effDef(u: BattleUnit): number {
+    return u.def + (u.defending ? DEFEND_BONUS : 0);
+  }
+
+  // How many creatures a flat `dmg` would slay from `target`.
+  private killsFor(target: BattleUnit, dmg: number): number {
+    const pool = (target.count - 1) * target.maxHp + target.hp;
+    if (dmg >= pool) return target.count;
+    const remaining = pool - dmg;
+    return target.count - Math.ceil(remaining / target.maxHp);
+  }
+
+  // Non-random forecast of an attack's damage and kill range (no retaliation).
+  estimate(attacker: BattleUnit, target: BattleUnit): DamageEstimate {
+    const c = CREATURES[attacker.cid];
+    const mult = this.multiplier(attacker.atk, this.effDef(target));
+    const lo = Math.max(1, Math.round(attacker.count * c.dmgMin * mult));
+    const hi = Math.max(1, Math.round(attacker.count * c.dmgMax * mult));
+    return {
+      dmgMin: lo,
+      dmgMax: hi,
+      killMin: this.killsFor(target, lo),
+      killMax: this.killsFor(target, hi),
+    };
+  }
+
   applyDamage(target: BattleUnit, rawDamage: number): AttackResult {
     const dmg = Math.max(1, Math.round(rawDamage));
     const before = target.count;
@@ -209,13 +305,13 @@ export class Battle {
   // Perform an attack. isShot = ranged shot (no retaliation, consumes a shot).
   attack(attacker: BattleUnit, target: BattleUnit, isShot: boolean): { hit: AttackResult; retaliation?: AttackResult } {
     const base = this.rollBaseDamage(attacker);
-    const mult = this.multiplier(attacker.atk, target.def);
+    const mult = this.multiplier(attacker.atk, this.effDef(target));
     const hit = this.applyDamage(target, base * mult);
     if (isShot && attacker.shots > 0) attacker.shots--;
     let retaliation: AttackResult | undefined;
     if (!isShot && target.count > 0 && !target.retaliatedThisRound) {
       const rBase = this.rollBaseDamage(target);
-      const rMult = this.multiplier(target.atk, attacker.def);
+      const rMult = this.multiplier(target.atk, this.effDef(attacker));
       retaliation = this.applyDamage(attacker, rBase * rMult);
       target.retaliatedThisRound = true;
     }
@@ -243,41 +339,63 @@ export type AiAction =
   | { kind: "move"; to: { x: number; y: number } }
   | { kind: "wait" };
 
+// How dangerous a stack is: total expected damage output, weighting shooters
+// (they hurt from afar and take no retaliation) so the AI prioritizes them.
+function threat(e: BattleUnit): number {
+  const c = CREATURES[e.cid];
+  const dps = e.count * ((c.dmgMin + c.dmgMax) / 2) * (1 + e.atk * 0.05);
+  return dps * (e.ranged && e.shots > 0 ? 1.6 : 1);
+}
+
+// Score attacking `target` from the AI's perspective: prefer wiping out high
+// threats, and prefer kills we can actually land (estimated damage vs. its hp).
+function attackScore(battle: Battle, u: BattleUnit, target: BattleUnit): number {
+  const est = battle.estimate(u, target);
+  const avgKill = (est.killMin + est.killMax) / 2;
+  return threat(target) * (1 + avgKill) + (est.dmgMin + est.dmgMax) / 2;
+}
+
 export function aiDecide(battle: Battle, u: BattleUnit): AiAction {
   const enemies = battle.units.filter((e) => e.count > 0 && e.side !== u.side);
   if (enemies.length === 0) return { kind: "wait" };
 
-  // Prefer shooting the weakest enemy if able.
+  // Shooters fire at the most dangerous enemy they can see (kills shooters fast).
   if (battle.canShoot(u)) {
-    const target = enemies.reduce((a, b) => (b.count * b.maxHp < a.count * a.maxHp ? b : a));
+    const target = enemies.reduce((a, b) => (attackScore(battle, u, b) > attackScore(battle, u, a) ? b : a));
     return { kind: "shoot", target };
   }
 
-  // Already adjacent? Attack the best target.
+  // Already adjacent? Strike the best-scoring neighbor.
   const adj = enemies.filter((e) => Battle.adjacent(u.x, u.y, e.x, e.y));
   if (adj.length) {
-    const target = adj.reduce((a, b) => (b.atk > a.atk ? b : a));
+    const target = adj.reduce((a, b) => (attackScore(battle, u, b) > attackScore(battle, u, a) ? b : a));
     return { kind: "attack", target, from: { x: u.x, y: u.y } };
   }
 
-  // Otherwise advance toward the nearest enemy, attacking if we can reach.
+  // Otherwise advance: if a charge can reach an enemy this turn, take the most
+  // valuable such strike; else close on the highest-threat foe (chasing shooters).
   const reach = battle.reachable(u);
   reach.add(u.y * BW + u.x);
-  let best: { cell: number; target: BattleUnit; d: number } | null = null;
+  let bestAttack: { cell: number; target: BattleUnit; score: number } | null = null;
+  for (const cell of reach) {
+    const cx = cell % BW, cy = Math.floor(cell / BW);
+    for (const e of enemies) {
+      if (Math.max(Math.abs(cx - e.x), Math.abs(cy - e.y)) !== 1) continue;
+      const score = attackScore(battle, u, e);
+      if (!bestAttack || score > bestAttack.score) bestAttack = { cell, target: e, score };
+    }
+  }
+  if (bestAttack) {
+    return { kind: "attack", target: bestAttack.target, from: { x: bestAttack.cell % BW, y: Math.floor(bestAttack.cell / BW) } };
+  }
+
+  const prey = enemies.reduce((a, b) => (threat(b) > threat(a) ? b : a));
   let bestMoveCell = -1;
   let bestMoveDist = Infinity;
   for (const cell of reach) {
     const cx = cell % BW, cy = Math.floor(cell / BW);
-    for (const e of enemies) {
-      const d = Math.max(Math.abs(cx - e.x), Math.abs(cy - e.y));
-      if (d === 1 && (!best || d < best.d)) best = { cell, target: e, d };
-      // track closest approach for pure movement
-      const approach = Math.hypot(cx - e.x, cy - e.y);
-      if (approach < bestMoveDist) { bestMoveDist = approach; bestMoveCell = cell; }
-    }
-  }
-  if (best) {
-    return { kind: "attack", target: best.target, from: { x: best.cell % BW, y: Math.floor(best.cell / BW) } };
+    const approach = Math.hypot(cx - prey.x, cy - prey.y);
+    if (approach < bestMoveDist) { bestMoveDist = approach; bestMoveCell = cell; }
   }
   if (bestMoveCell >= 0 && bestMoveCell !== u.y * BW + u.x) {
     return { kind: "move", to: { x: bestMoveCell % BW, y: Math.floor(bestMoveCell / BW) } };
