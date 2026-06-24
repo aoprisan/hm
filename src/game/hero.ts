@@ -17,6 +17,10 @@ export class Hero {
   scouting = 4;
   level = 1;
   experience = 0;
+  // spell points spent casting in battle; refilled each new day. Spells the
+  // hero has learned at the Mage Guild live in `spells` (see data/spells).
+  mana = 10;
+  maxMana = 10;
   // active path being walked
   path: PathTile[] = [];
 
@@ -33,6 +37,12 @@ export class Hero {
 
   resetMovement(): void {
     this.movePoints = this.maxMovePoints;
+    this.mana = this.maxMana;
+  }
+
+  // Total experience needed to reach the next level (the gainExp threshold).
+  expForNextLevel(): number {
+    return this.level * 1000;
   }
 
   gainExp(n: number): void {

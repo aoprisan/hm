@@ -20,6 +20,7 @@ import {
 } from "../art/sprites_objects";
 import { creatureSprite } from "../art/sprites_creatures";
 import { drawResourceBar, HUD_H } from "../ui/hud";
+import { heroBadge } from "../ui/herobadge";
 import {
   Button, button, glass, panel, parchment, pointInRect, roundRectPath,
   text, textShadow, wrapText, Rect,
@@ -374,7 +375,13 @@ export class AdventureScene implements Scene {
       Math.max(1, Math.round(power / 800)),
       name,
       (outcome) => {
-        if (outcome.playerWon) this.state.hero.gainExp(Math.max(50, Math.round(power / 4)));
+        if (outcome.playerWon) {
+          const before = this.state.hero.level;
+          this.state.hero.gainExp(Math.max(50, Math.round(power / 4)));
+          if (this.state.hero.level > before) {
+            this.state.pushLog(`${this.state.hero.name} reached level ${this.state.hero.level}!`);
+          }
+        }
         cb(outcome.playerWon);
         this.app.toAdventure();
       },
@@ -580,18 +587,19 @@ export class AdventureScene implements Scene {
 
     const h0 = this.state.hero;
     // hero card
-    parchment(ctx, pad, y + 18, Math.min(360, L.vw - pad * 2), 86);
-    heroSprite(this.state.town.faction).draw(ctx, pad + 10, y + 28, 4);
+    const cardW = Math.min(360, L.vw - pad * 2);
+    parchment(ctx, pad, y + 18, cardW, 104);
+    heroSprite(this.state.town.faction).draw(ctx, pad + 10, y + 30, 4);
     textShadow(ctx, h0.name, pad + 74, y + 40, "#3a2410", "bold 17px 'Trebuchet MS'");
-    text(ctx, `Level ${h0.level}    Atk ${h0.attack}   Def ${h0.defense}`, pad + 74, y + 62, "#5b3a1a", "13px 'Trebuchet MS'");
+    heroBadge(ctx, h0, pad + 74, y + 56, cardW - 90, { dark: false, bar: true });
     const mvFrac = h0.movePoints / h0.maxMovePoints;
     ctx.fillStyle = "#3a2410";
-    ctx.fillRect(pad + 74, y + 74, Math.min(360, L.vw - pad * 2) - 90, 10);
+    ctx.fillRect(pad + 74, y + 86, cardW - 90, 10);
     ctx.fillStyle = mvFrac > 0.25 ? "#4f8a3a" : "#c8413a";
-    ctx.fillRect(pad + 75, y + 75, (Math.min(360, L.vw - pad * 2) - 92) * mvFrac, 8);
+    ctx.fillRect(pad + 75, y + 87, (cardW - 92) * mvFrac, 8);
 
     // army row
-    const ay = y + 116;
+    const ay = y + 138;
     text(ctx, "Army", pad, ay - 4, "#fff0c8", "bold 14px 'Trebuchet MS'");
     const cols = 5;
     const slotW = (Math.min(420, L.vw - pad * 2) - (cols - 1) * 6) / cols;

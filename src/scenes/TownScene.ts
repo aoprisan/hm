@@ -17,6 +17,7 @@ import { townBackground, buildingArt } from "../art/sprites_town";
 import { creatureSprite } from "../art/sprites_creatures";
 import { resourceIcon } from "../art/sprites_ui";
 import { drawResourceBar, HUD_H } from "../ui/hud";
+import { heroBadge } from "../ui/herobadge";
 import { Button, button, panel, parchment, pointInRect, text, textShadow, wrapText, Rect } from "../ui/widgets";
 
 const DESIGN_W = 1024;
@@ -286,6 +287,10 @@ export class TownScene implements Scene {
     if (side === "garrison" && this.heroHere) {
       text(ctx, "tap a stack, then a slot in the other row to move it",
         140, rowY + 22, "#b7a884", "11px 'Trebuchet MS'");
+    }
+    if (side === "hero") {
+      const bx = 140, bw = Math.min(220, L.btnLeave.x - bx - 12);
+      if (bw > 80) heroBadge(ctx, this.state.hero, bx, rowY + 18, bw, { dark: true, bar: false });
     }
     const army = this.armyFor(side);
     const slots = this.rowSlots(L, rowY);
