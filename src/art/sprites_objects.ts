@@ -1,7 +1,7 @@
 // Adventure-map object art: hero, castle, enemy stronghold, mines, resource
 // piles, chests, signposts and decorative trees/rocks. Buildings are drawn on
 // canvases (easy shapes); the hero is a pixel sprite so it can face/flip.
-import { PixelSprite } from "./pixelsprite";
+import { PixelSprite, makePalette } from "./pixelsprite";
 import { ResourceKind } from "../data/resources";
 import { Owner } from "../game/map";
 import { FactionId, FACTIONS } from "../data/factions";
@@ -18,7 +18,11 @@ function r(c: CanvasRenderingContext2D, x: number, y: number, w: number, h: numb
 }
 
 // ---------- Hero (pixel sprite, faces right; flip for left) ----------
-export const heroSprite = new PixelSprite([
+// One silhouette, recolored per faction so each town fields a visually
+// distinct champion: a blue Knight, a green Sorceress ranger, a purple
+// Warlock, and a pale Necropolis death-knight. Letters: z armor, h plume,
+// s skin, r/R cape, u tunic, y belt, b legs, k outline.
+const HERO_ROWS = [
   ".....zz.....",
   "....zhhz....",
   "....zssz....",
@@ -35,7 +39,28 @@ export const heroSprite = new PixelSprite([
   "...bb..bb...",
   "...kk..kk...",
   "..kkk..kkk..",
-]);
+];
+
+// Per-faction recoloring. Knight keeps the base palette (blue & red & gold).
+const HERO_PALETTES: Record<FactionId, Record<string, string | null>> = {
+  knight: makePalette({}),
+  sorceress: makePalette({
+    u: "#57a83f", r: "#8a5a2b", R: "#5b3a1a", h: "#bfe88a", z: "#c2ccb2", y: "#f2c44d",
+  }),
+  warlock: makePalette({
+    u: "#7a3f9a", r: "#c98ad8", R: "#542c70", h: "#e6c6f0", z: "#b0a4c6", y: "#e0b84a",
+  }),
+  necropolis: makePalette({
+    u: "#6b645c", r: "#8f2b27", R: "#54201d", s: "#c8d4bc", h: "#d6dccf", z: "#9aa0a8", y: "#b8b0a2",
+  }),
+};
+
+const heroCache = new Map<FactionId, PixelSprite>();
+export function heroSprite(faction: FactionId): PixelSprite {
+  let s = heroCache.get(faction);
+  if (!s) { s = new PixelSprite(HERO_ROWS, HERO_PALETTES[faction]); heroCache.set(faction, s); }
+  return s;
+}
 
 // ---------- Castle ----------
 export function castleSprite(owner: Owner, faction?: FactionId): HTMLCanvasElement {
