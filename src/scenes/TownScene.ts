@@ -1,8 +1,10 @@
-// Town (castle) scene: painted backdrop with clickable buildings. Build from the
-// tree, recruit creatures into the hero's army, and trade at the marketplace.
+// Town (castle) scene, mobile-first: the painted town is "cover"-fit into the
+// available area and can be dragged to scroll on narrow screens, so buildings
+// stay large enough to tap. Build / recruit / market run through responsive,
+// touch-sized modals. A bottom strip shows the hero's army + Leave button.
 import type { App } from "../app";
 import { Scene } from "../engine/scene";
-import { Renderer, VW, VH } from "../engine/renderer";
+import { Renderer } from "../engine/renderer";
 import { Input } from "../engine/input";
 import { Sfx } from "../engine/audio";
 import { BUILDINGS, BUILDING_ORDER, BuildingId } from "../data/buildings";
@@ -12,11 +14,11 @@ import { build, canBuild, recruit, maxAffordable, sellResource, SELL_RATE } from
 import { townBackground, buildingArt } from "../art/sprites_town";
 import { creatureSprite } from "../art/sprites_creatures";
 import { resourceIcon } from "../art/sprites_ui";
-import { drawHud, HUD_H } from "../ui/hud";
+import { drawResourceBar, HUD_H } from "../ui/hud";
 import { Button, button, panel, parchment, pointInRect, text, textShadow, wrapText, Rect } from "../ui/widgets";
 
-const ARMY_H = 72;
-const TOWN_H = VH - HUD_H - ARMY_H;
+const DESIGN_W = 1024;
+const DESIGN_H = 524;
 
 type Modal =
   | { kind: "build"; id: BuildingId }
@@ -25,40 +27,84 @@ type Modal =
   | { kind: "info"; title: string; body: string }
   | null;
 
+interface Layout {
+  vw: number; vh: number;
+  topH: number; armyH: number;
+  region: Rect;          // where the town art is drawn (clipped)
+  scale: number;
+  offX: number; offY: number; // art top-left in screen space (after pan)
+  scrollW: number; scrollH: number; // pannable overflow
+  btnLeave: Button;
+}
+
+interface ModalBtn { rect: Rect; act: () => void; label: string; enabled?: boolean; primary?: boolean; }
+
 export class TownScene implements Scene {
   private modal: Modal = null;
   private hover: BuildingId | null = null;
-  private btnLeave: Button = { x: VW - 150, y: VH - HUD_H - ARMY_H + 16, w: 134, h: 40, label: "Leave Town" };
+  private camX = 0;
+  private camY = 0;
+  private centered = false;
 
   constructor(private app: App) {}
   private get state() { return this.app.state; }
+  private get r(): Renderer { return this.app.renderer; }
 
-  private buildingRect(id: BuildingId): Rect {
+  private layout(): Layout {
+    const r = this.r;
+    const vw = r.vw, vh = r.vh;
+    const topH = HUD_H;
+    const armyH = Math.round(Math.min(108, Math.max(84, vh * 0.16)));
+    const region: Rect = { x: 0, y: topH, w: vw, h: vh - topH - armyH };
+    // "cover" fit so buildings stay sizeable; cap zoom on large screens.
+    const scale = Math.min(1.6, Math.max(region.w / DESIGN_W, region.h / DESIGN_H));
+    const tw = DESIGN_W * scale, th = DESIGN_H * scale;
+    const scrollW = Math.max(0, tw - region.w);
+    const scrollH = Math.max(0, th - region.h);
+    this.camX = Math.max(0, Math.min(scrollW, this.camX));
+    this.camY = Math.max(0, Math.min(scrollH, this.camY));
+    const offX = region.x + (scrollW > 0 ? -this.camX : (region.w - tw) / 2);
+    const offY = region.y + (scrollH > 0 ? -this.camY : (region.h - th) / 2);
+    const btnLeave: Button = { x: vw - 132, y: vh - armyH + (armyH - 44) / 2, w: 120, h: 44, label: "Leave" };
+    return { vw, vh, topH, armyH, region, scale, offX, offY, scrollW, scrollH, btnLeave };
+  }
+
+  private buildingRect(L: Layout, id: BuildingId): Rect {
     const b = BUILDINGS[id];
     const art = buildingArt(id);
-    return { x: b.anchor.x - art.width / 2, y: b.anchor.y - art.height, w: art.width, h: art.height };
+    return {
+      x: L.offX + (b.anchor.x - art.width / 2) * L.scale,
+      y: L.offY + (b.anchor.y - art.height) * L.scale,
+      w: art.width * L.scale,
+      h: art.height * L.scale,
+    };
   }
 
   update(_dt: number, input: Input): void {
+    const L = this.layout();
+    if (!this.centered) { this.camX = L.scrollW / 2; this.camY = L.scrollH; this.centered = true; }
+
+    const pan = input.takePan();
+    if (!this.modal && (pan.dx || pan.dy)) { this.camX -= pan.dx; this.camY -= pan.dy; }
+
     const p = input.pointer;
     this.hover = null;
-    if (!this.modal && p.y < TOWN_H) {
-      // topmost (largest y anchor first) building under cursor
+    if (!this.modal && pointInRect(p.x, p.y, L.region) && !input.isDragging) {
       for (const id of [...BUILDING_ORDER].reverse()) {
-        if (pointInRect(p.x, p.y, this.buildingRect(id))) { this.hover = id; break; }
+        if (pointInRect(p.x, p.y, this.buildingRect(L, id))) { this.hover = id; break; }
       }
     }
-    for (const c of input.takeClicks()) this.handleClick(c.x, c.y);
+    for (const c of input.takeClicks()) this.handleClick(L, c.x, c.y);
     for (const k of input.takeKeys()) if (k === "Escape") { if (this.modal) this.modal = null; else this.app.toAdventure(); }
   }
 
-  private handleClick(px: number, py: number): void {
+  private handleClick(L: Layout, px: number, py: number): void {
     Sfx.click();
     if (this.modal) { this.handleModalClick(px, py); return; }
-    if (pointInRect(px, py, this.btnLeave)) { this.app.toAdventure(); return; }
-    if (py >= TOWN_H) return;
+    if (pointInRect(px, py, L.btnLeave)) { this.app.toAdventure(); return; }
+    if (!pointInRect(px, py, L.region)) return;
     for (const id of [...BUILDING_ORDER].reverse()) {
-      if (!pointInRect(px, py, this.buildingRect(id))) continue;
+      if (!pointInRect(px, py, this.buildingRect(L, id))) continue;
       this.openBuilding(id);
       return;
     }
@@ -72,41 +118,52 @@ export class TownScene implements Scene {
     this.modal = { kind: "info", title: b.name, body: b.desc };
   }
 
-  // ---- modal interactions ----
-  private modalButtons(): { rect: Rect; act: () => void; label: string; enabled?: boolean }[] {
+  // ---- modal geometry ----
+  private modalBox(L: Layout): Rect {
+    const w = Math.min(460, L.vw - 24);
+    const h = Math.min(L.vh - 24, this.modal?.kind === "market" ? 380 : 300);
+    return { x: (L.vw - w) / 2, y: (L.vh - h) / 2, w, h };
+  }
+
+  private modalButtons(L: Layout): ModalBtn[] {
     const m = this.modal;
     if (!m) return [];
-    const w = 480, h = 280;
-    const x = (VW - w) / 2, y = (VH - h) / 2;
-    const out: { rect: Rect; act: () => void; label: string; enabled?: boolean }[] = [];
+    const box = this.modalBox(L);
+    const { x, y, w, h } = box;
+    const by = y + h - 60, bh = 46;
+    const out: ModalBtn[] = [];
     if (m.kind === "build") {
       const ok = canBuild(this.state, m.id).ok;
-      out.push({ rect: { x: x + 60, y: y + h - 56, w: 150, h: 40 }, label: "Build", enabled: ok, act: () => {
+      const half = (w - 48) / 2;
+      out.push({ rect: { x: x + 16, y: by, w: half, h: bh }, label: "Build", primary: true, enabled: ok, act: () => {
         if (build(this.state, m.id)) { Sfx.build(); this.modal = null; } } });
-      out.push({ rect: { x: x + w - 210, y: y + h - 56, w: 150, h: 40 }, label: "Cancel", act: () => (this.modal = null) });
+      out.push({ rect: { x: x + 32 + half, y: by, w: half, h: bh }, label: "Cancel", act: () => (this.modal = null) });
     } else if (m.kind === "recruit") {
       const maxN = Math.min(this.state.town.available[m.cid] ?? 0, maxAffordable(this.state, m.cid));
-      out.push({ rect: { x: x + 40, y: y + 150, w: 36, h: 36 }, label: "-", act: () => (m.qty = Math.max(1, m.qty - 1)) });
-      out.push({ rect: { x: x + 120, y: y + 150, w: 36, h: 36 }, label: "+", act: () => (m.qty = Math.min(Math.max(1, maxN), m.qty + 1)) });
-      out.push({ rect: { x: x + 168, y: y + 150, w: 60, h: 36 }, label: "Max", act: () => (m.qty = Math.max(1, maxN)) });
-      out.push({ rect: { x: x + 60, y: y + h - 56, w: 150, h: 40 }, label: "Recruit", enabled: maxN > 0, act: () => {
+      const qy = y + h - 124, qh = 44;
+      out.push({ rect: { x: x + 16, y: qy, w: 48, h: qh }, label: "−", act: () => (m.qty = Math.max(1, m.qty - 1)) });
+      out.push({ rect: { x: x + 120, y: qy, w: 48, h: qh }, label: "+", act: () => (m.qty = Math.min(Math.max(1, maxN), m.qty + 1)) });
+      out.push({ rect: { x: x + 176, y: qy, w: 64, h: qh }, label: "Max", act: () => (m.qty = Math.max(1, maxN)) });
+      const half = (w - 48) / 2;
+      out.push({ rect: { x: x + 16, y: by, w: half, h: bh }, label: "Recruit", primary: true, enabled: maxN > 0, act: () => {
         if (recruit(this.state, m.cid, m.qty, this.state.hero.army)) { Sfx.coin(); this.modal = null; } } });
-      out.push({ rect: { x: x + w - 210, y: y + h - 56, w: 150, h: 40 }, label: "Close", act: () => (this.modal = null) });
+      out.push({ rect: { x: x + 32 + half, y: by, w: half, h: bh }, label: "Close", act: () => (this.modal = null) });
     } else if (m.kind === "market") {
       RESOURCE_ORDER.filter((k) => k !== "gold").forEach((k, i) => {
-        const ry = y + 70 + i * 32;
-        out.push({ rect: { x: x + w - 200, y: ry - 18, w: 80, h: 26 }, label: "Sell 1", enabled: this.state.resources[k] >= 1, act: () => { sellResource(this.state, k, 1); Sfx.coin(); } });
-        out.push({ rect: { x: x + w - 110, y: ry - 18, w: 90, h: 26 }, label: "Sell 5", enabled: this.state.resources[k] >= 5, act: () => { sellResource(this.state, k, 5); Sfx.coin(); } });
+        const ry = y + 70 + i * 38;
+        out.push({ rect: { x: x + w - 188, y: ry - 20, w: 80, h: 32 }, label: "Sell 1", enabled: this.state.resources[k] >= 1, act: () => { sellResource(this.state, k, 1); Sfx.coin(); } });
+        out.push({ rect: { x: x + w - 98, y: ry - 20, w: 84, h: 32 }, label: "Sell 5", enabled: this.state.resources[k] >= 5, act: () => { sellResource(this.state, k, 5); Sfx.coin(); } });
       });
-      out.push({ rect: { x: x + w / 2 - 75, y: y + h - 52, w: 150, h: 38 }, label: "Close", act: () => (this.modal = null) });
+      out.push({ rect: { x: x + w / 2 - 80, y: by, w: 160, h: bh }, label: "Close", primary: true, act: () => (this.modal = null) });
     } else if (m.kind === "info") {
-      out.push({ rect: { x: x + w / 2 - 75, y: y + h - 56, w: 150, h: 40 }, label: "Close", act: () => (this.modal = null) });
+      out.push({ rect: { x: x + w / 2 - 80, y: by, w: 160, h: bh }, label: "Close", primary: true, act: () => (this.modal = null) });
     }
     return out;
   }
 
   private handleModalClick(px: number, py: number): void {
-    for (const b of this.modalButtons()) {
+    const L = this.layout();
+    for (const b of this.modalButtons(L)) {
       if (b.enabled === false) continue;
       if (pointInRect(px, py, b.rect)) { b.act(); return; }
     }
@@ -115,39 +172,46 @@ export class TownScene implements Scene {
   // ---------------- drawing ----------------
   draw(r: Renderer): void {
     const ctx = r.ctx;
-    ctx.drawImage(townBackground(VW, TOWN_H), 0, 0);
+    const L = this.layout();
+    r.clear("#8ec5e8");
+
+    // town art, clipped to its region and panned
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(L.region.x, L.region.y, L.region.w, L.region.h);
+    ctx.clip();
+    const tw = Math.round(DESIGN_W * L.scale), th = Math.round(DESIGN_H * L.scale);
+    ctx.drawImage(townBackground(tw, th), Math.round(L.offX), Math.round(L.offY));
+    for (const id of BUILDING_ORDER) this.drawBuilding(ctx, L, id);
+    ctx.restore();
 
     // title banner
-    panel(ctx, VW / 2 - 130, 8, 260, 34, "#6b4a24", "#8a6432", "#3a2410");
-    textShadow(ctx, this.state.town.name, VW / 2, 32, "#fff0c8", "bold 20px 'Trebuchet MS'", "center");
+    const bannerW = Math.min(280, L.vw - 24);
+    panel(ctx, L.vw / 2 - bannerW / 2, L.topH + 8, bannerW, 34, "#6b4a24", "#8a6432", "#3a2410");
+    textShadow(ctx, this.state.town.name, L.vw / 2, L.topH + 31, "#fff0c8", "bold 20px 'Trebuchet MS'", "center");
 
-    for (const id of BUILDING_ORDER) this.drawBuilding(ctx, id);
+    this.drawArmyStrip(ctx, L);
+    drawResourceBar(ctx, this.state, 0, 0, L.vw, L.topH);
+    button(ctx, L.btnLeave, false);
 
-    // army strip
-    this.drawArmyStrip(ctx);
-    drawHud(ctx, this.state, VW, VH);
-    button(ctx, this.btnLeave, false);
-
-    // hover tooltip
-    if (this.hover) this.drawTooltip(ctx, this.hover);
-
-    if (this.modal) this.drawModal(ctx);
+    if (this.hover && !this.modal) this.drawTooltip(ctx, L, this.hover);
+    if (this.modal) this.drawModal(ctx, L);
   }
 
-  private drawBuilding(ctx: CanvasRenderingContext2D, id: BuildingId): void {
+  private drawBuilding(ctx: CanvasRenderingContext2D, L: Layout, id: BuildingId): void {
     const art = buildingArt(id);
-    const rect = this.buildingRect(id);
+    const rect = this.buildingRect(L, id);
     const built = this.state.town.built.has(id);
     if (!built) {
       ctx.globalAlpha = 0.28;
-      ctx.drawImage(art, rect.x, rect.y);
+      ctx.drawImage(art, rect.x, rect.y, rect.w, rect.h);
       ctx.globalAlpha = 1;
-      // build marker
       const can = canBuild(this.state, id).ok;
-      panel(ctx, rect.x + rect.w / 2 - 12, rect.y + rect.h / 2 - 12, 24, 24, can ? "#4f8a3a" : "#7d3a3a", "#79b85a", "#1c1208");
-      text(ctx, "+", rect.x + rect.w / 2, rect.y + rect.h / 2 + 6, "#fff0c8", "bold 18px 'Trebuchet MS'", "center");
+      const m = Math.min(rect.w, rect.h) * 0.32;
+      panel(ctx, rect.x + rect.w / 2 - m / 2, rect.y + rect.h / 2 - m / 2, m, m, can ? "#4f8a3a" : "#7d3a3a", "#79b85a", "#1c1208");
+      text(ctx, "+", rect.x + rect.w / 2, rect.y + rect.h / 2 + m * 0.3, "#fff0c8", `bold ${Math.round(m * 0.7)}px 'Trebuchet MS'`, "center");
     } else {
-      ctx.drawImage(art, rect.x, rect.y);
+      ctx.drawImage(art, rect.x, rect.y, rect.w, rect.h);
       if (this.hover === id) {
         ctx.strokeStyle = "rgba(255,240,176,0.9)";
         ctx.lineWidth = 2;
@@ -156,94 +220,100 @@ export class TownScene implements Scene {
     }
   }
 
-  private drawTooltip(ctx: CanvasRenderingContext2D, id: BuildingId): void {
+  private drawTooltip(ctx: CanvasRenderingContext2D, L: Layout, id: BuildingId): void {
     const b = BUILDINGS[id];
     const built = this.state.town.built.has(id);
     const lines = [b.name, built ? b.desc : `Cost: ${costStr(b.cost)}`];
     const w = 240;
-    const x = Math.min(VW - w - 8, Math.max(8, this.app.input.pointer.x + 14));
-    const y = Math.max(8, this.app.input.pointer.y - 50);
+    const x = Math.min(L.vw - w - 8, Math.max(8, this.app.input.pointer.x + 14));
+    const y = Math.max(L.topH + 8, this.app.input.pointer.y - 60);
     parchment(ctx, x, y, w, 56);
     textShadow(ctx, lines[0], x + 12, y + 22, "#5b2a10", "bold 15px 'Trebuchet MS'");
     wrapText(ctx, lines[1], x + 12, y + 40, w - 24, 16, "#3a2410", "12px 'Trebuchet MS'");
   }
 
-  private drawArmyStrip(ctx: CanvasRenderingContext2D): void {
-    const y = TOWN_H;
-    panel(ctx, 0, y, VW, ARMY_H);
-    text(ctx, "Hero's Army", 16, y + 20, "#fff0c8", "bold 14px 'Trebuchet MS'");
-    const slotW = 88;
-    for (let i = 0; i < 5; i++) {
+  private drawArmyStrip(ctx: CanvasRenderingContext2D, L: Layout): void {
+    const y = L.vh - L.armyH;
+    panel(ctx, 0, y, L.vw, L.armyH);
+    text(ctx, "Hero's Army", 16, y + 22, "#fff0c8", "bold 14px 'Trebuchet MS'");
+    const leaveLeft = L.btnLeave.x - 12;
+    const cols = 5;
+    const avail = leaveLeft - 16;
+    const slotW = Math.min(96, (avail - (cols - 1) * 8) / cols);
+    const sy = y + 30;
+    for (let i = 0; i < cols; i++) {
       const sx = 16 + i * (slotW + 8);
-      const sy = y + 26;
-      panel(ctx, sx, sy, slotW, 38, "#5b4a36", "#6a5a44", "#2a1d10");
+      if (sx + slotW > leaveLeft) break;
+      panel(ctx, sx, sy, slotW, L.armyH - 40, "#5b4a36", "#6a5a44", "#2a1d10");
       const s = this.state.hero.army[i];
       if (s && s.count > 0) {
         const spr = creatureSprite(s.id);
-        spr.drawCenteredBottom(ctx, sx + 24, sy + 34, 2);
-        text(ctx, CREATURES[s.id].name, sx + 40, sy + 16, "#fff0c8", "11px 'Trebuchet MS'");
-        text(ctx, `x${s.count}`, sx + 40, sy + 32, "#f2c44d", "bold 13px 'Trebuchet MS'");
+        spr.drawCenteredBottom(ctx, sx + 22, sy + L.armyH - 46, 2);
+        text(ctx, CREATURES[s.id].name, sx + 38, sy + 16, "#fff0c8", "10px 'Trebuchet MS'");
+        text(ctx, `x${s.count}`, sx + 38, sy + 32, "#f2c44d", "bold 13px 'Trebuchet MS'");
       }
     }
-    if (this.state.town.builtToday) text(ctx, "Already built today", VW - 320, y + 20, "#e8a0a0", "12px 'Trebuchet MS'");
+    if (this.state.town.builtToday) text(ctx, "Built today", L.btnLeave.x - 4, y + 22, "#e8a0a0", "12px 'Trebuchet MS'", "right");
   }
 
   // ---- modals ----
-  private drawModal(ctx: CanvasRenderingContext2D): void {
+  private drawModal(ctx: CanvasRenderingContext2D, L: Layout): void {
     const m = this.modal!;
-    const w = 480, h = 280;
-    const x = (VW - w) / 2, y = (VH - h) / 2;
-    ctx.fillStyle = "rgba(0,0,0,0.5)";
-    ctx.fillRect(0, 0, VW, VH);
-    parchment(ctx, x, y, w, h);
+    const box = this.modalBox(L);
+    ctx.fillStyle = "rgba(0,0,0,0.55)";
+    ctx.fillRect(0, 0, L.vw, L.vh);
+    parchment(ctx, box.x, box.y, box.w, box.h);
 
-    if (m.kind === "build") this.drawBuildModal(ctx, x, y, w, m.id);
-    else if (m.kind === "recruit") this.drawRecruitModal(ctx, x, y, m);
-    else if (m.kind === "market") this.drawMarketModal(ctx, x, y, w, h);
+    if (m.kind === "build") this.drawBuildModal(ctx, box, m.id);
+    else if (m.kind === "recruit") this.drawRecruitModal(ctx, box, m);
+    else if (m.kind === "market") this.drawMarketModal(ctx, box);
     else if (m.kind === "info") {
-      textShadow(ctx, m.title, x + w / 2, y + 40, "#5b2a10", "bold 22px 'Trebuchet MS'", "center");
-      wrapText(ctx, m.body, x + 30, y + 80, w - 60, 24, "#3a2410", "16px 'Trebuchet MS'");
+      textShadow(ctx, m.title, box.x + box.w / 2, box.y + 40, "#5b2a10", "bold 22px 'Trebuchet MS'", "center");
+      wrapText(ctx, m.body, box.x + 24, box.y + 78, box.w - 48, 24, "#3a2410", "16px 'Trebuchet MS'");
     }
-    for (const b of this.modalButtons()) button(ctx, { ...b.rect, label: b.label, enabled: b.enabled }, false);
+    for (const b of this.modalButtons(L)) button(ctx, { ...b.rect, label: b.label, enabled: b.enabled, primary: b.primary }, false);
   }
 
-  private drawBuildModal(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, id: BuildingId): void {
+  private drawBuildModal(ctx: CanvasRenderingContext2D, box: Rect, id: BuildingId): void {
     const b = BUILDINGS[id];
-    ctx.drawImage(buildingArt(id), x + 24, y + 50);
-    textShadow(ctx, b.name, x + 160, y + 56, "#5b2a10", "bold 22px 'Trebuchet MS'");
-    wrapText(ctx, b.desc, x + 160, y + 86, w - 190, 22, "#3a2410", "15px 'Trebuchet MS'");
-    text(ctx, "Cost:", x + 160, y + 150, "#5b3a1a", "bold 14px 'Trebuchet MS'");
-    this.drawCostRow(ctx, b.cost, x + 210, y + 142);
+    const { x, y, w } = box;
+    ctx.drawImage(buildingArt(id), x + 20, y + 20, 96, 96);
+    textShadow(ctx, b.name, x + 128, y + 44, "#5b2a10", "bold 21px 'Trebuchet MS'");
+    wrapText(ctx, b.desc, x + 128, y + 70, w - 148, 20, "#3a2410", "14px 'Trebuchet MS'");
+    text(ctx, "Cost:", x + 24, y + 150, "#5b3a1a", "bold 14px 'Trebuchet MS'");
+    this.drawCostRow(ctx, b.cost, x + 74, y + 142);
     const reason = canBuild(this.state, id).reason;
-    if (reason) text(ctx, reason, x + 160, y + 178, "#9c3a2a", "13px 'Trebuchet MS'");
+    if (reason) text(ctx, reason, x + 24, y + 178, "#9c3a2a", "13px 'Trebuchet MS'");
   }
 
-  private drawRecruitModal(ctx: CanvasRenderingContext2D, x: number, y: number, m: { cid: CreatureId; qty: number }): void {
+  private drawRecruitModal(ctx: CanvasRenderingContext2D, box: Rect, m: { cid: CreatureId; qty: number }): void {
     const c = CREATURES[m.cid];
+    const { x, y } = box;
     const spr = creatureSprite(m.cid);
-    parchment(ctx, x + 24, y + 40, 96, 96);
-    spr.drawCenteredBottom(ctx, x + 72, y + 128, 4);
-    textShadow(ctx, c.name, x + 140, y + 60, "#5b2a10", "bold 22px 'Trebuchet MS'");
-    text(ctx, `Atk ${c.atk}  Def ${c.def}  HP ${c.hp}`, x + 140, y + 86, "#3a2410", "14px 'Trebuchet MS'");
-    text(ctx, `Damage ${c.dmgMin}-${c.dmgMax}  Speed ${c.speed}${c.shots ? "  Shots " + c.shots : ""}`, x + 140, y + 106, "#3a2410", "14px 'Trebuchet MS'");
+    parchment(ctx, x + 20, y + 20, 92, 92);
+    spr.drawCenteredBottom(ctx, x + 66, y + 104, 4);
+    textShadow(ctx, c.name, x + 124, y + 42, "#5b2a10", "bold 21px 'Trebuchet MS'");
+    text(ctx, `Atk ${c.atk}  Def ${c.def}  HP ${c.hp}`, x + 124, y + 66, "#3a2410", "13px 'Trebuchet MS'");
+    text(ctx, `Dmg ${c.dmgMin}-${c.dmgMax}  Spd ${c.speed}${c.shots ? "  Shots " + c.shots : ""}`, x + 124, y + 86, "#3a2410", "13px 'Trebuchet MS'");
     const avail = this.state.town.available[m.cid] ?? 0;
-    text(ctx, `Available: ${avail}`, x + 140, y + 130, "#5b3a1a", "bold 14px 'Trebuchet MS'");
-    // quantity box
-    panel(ctx, x + 80, y + 150, 36, 36, "#d8c089", "#ece0b8", "#9c7c44");
-    text(ctx, String(m.qty), x + 98, y + 174, "#3a2410", "bold 18px 'Trebuchet MS'", "center");
-    text(ctx, "Total cost:", x + 240, y + 168, "#5b3a1a", "bold 14px 'Trebuchet MS'");
-    this.drawCostRow(ctx, scaleCost(c.cost, m.qty), x + 330, y + 162);
+    text(ctx, `Available: ${avail}`, x + 124, y + 108, "#5b3a1a", "bold 13px 'Trebuchet MS'");
+    // quantity readout between - and + (buttons drawn separately)
+    const qy = box.y + box.h - 124;
+    panel(ctx, x + 70, qy, 46, 44, "#d8c089", "#ece0b8", "#9c7c44");
+    text(ctx, String(m.qty), x + 93, qy + 30, "#3a2410", "bold 20px 'Trebuchet MS'", "center");
+    text(ctx, "Total:", x + 252, qy + 18, "#5b3a1a", "bold 13px 'Trebuchet MS'");
+    this.drawCostRow(ctx, scaleCost(c.cost, m.qty), x + 252, qy + 26);
   }
 
-  private drawMarketModal(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, _h: number): void {
-    void w;
-    textShadow(ctx, "Marketplace", x + 240, y + 36, "#5b2a10", "bold 22px 'Trebuchet MS'", "center");
+  private drawMarketModal(ctx: CanvasRenderingContext2D, box: Rect): void {
+    const { x, y } = box;
+    textShadow(ctx, "Marketplace", box.x + box.w / 2, y + 38, "#5b2a10", "bold 22px 'Trebuchet MS'", "center");
     RESOURCE_ORDER.filter((k) => k !== "gold").forEach((k, i) => {
-      const ry = y + 70 + i * 32;
-      ctx.drawImage(resourceIcon(k), x + 30, ry - 16);
-      text(ctx, RESOURCE_LABEL[k], x + 56, ry, "#3a2410", "14px 'Trebuchet MS'");
-      text(ctx, `Have: ${this.state.resources[k]}`, x + 150, ry, "#5b3a1a", "13px 'Trebuchet MS'");
-      text(ctx, `= ${SELL_RATE[k]}g`, x + 270, ry, "#a8761f", "13px 'Trebuchet MS'");
+      const ry = y + 70 + i * 38;
+      ctx.drawImage(resourceIcon(k), x + 24, ry - 16);
+      text(ctx, RESOURCE_LABEL[k], x + 50, ry, "#3a2410", "14px 'Trebuchet MS'");
+      text(ctx, `Have ${this.state.resources[k]}`, x + 140, ry, "#5b3a1a", "13px 'Trebuchet MS'");
+      text(ctx, `${SELL_RATE[k]}g`, x + 250, ry, "#a8761f", "13px 'Trebuchet MS'");
     });
   }
 

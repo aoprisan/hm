@@ -4,11 +4,42 @@ export interface Rect { x: number; y: number; w: number; h: number; }
 export interface Button extends Rect {
   label: string;
   enabled?: boolean;
+  primary?: boolean; // gold call-to-action styling
   tag?: string;
 }
 
 export function pointInRect(px: number, py: number, r: Rect): boolean {
   return px >= r.x && py >= r.y && px <= r.x + r.w && py <= r.y + r.h;
+}
+
+// Rounded-rectangle path (used for glass overlays and pills).
+export function roundRectPath(
+  ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number,
+): void {
+  const rr = Math.min(r, w / 2, h / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + rr, y);
+  ctx.arcTo(x + w, y, x + w, y + h, rr);
+  ctx.arcTo(x + w, y + h, x, y + h, rr);
+  ctx.arcTo(x, y + h, x, y, rr);
+  ctx.arcTo(x, y, x + w, y, rr);
+  ctx.closePath();
+}
+
+// Translucent dark "glass" bar/sheet used for HUD overlays on the map.
+export function glass(
+  ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number,
+  radius = 0, alpha = 0.6,
+): void {
+  ctx.save();
+  if (radius > 0) roundRectPath(ctx, x, y, w, h, radius);
+  else { ctx.beginPath(); ctx.rect(x, y, w, h); }
+  ctx.fillStyle = `rgba(20,14,8,${alpha})`;
+  ctx.fill();
+  ctx.strokeStyle = "rgba(138,100,50,0.55)";
+  ctx.lineWidth = 1;
+  ctx.stroke();
+  ctx.restore();
 }
 
 // Carved stone/wood panel with a beveled border.
@@ -42,23 +73,35 @@ export function button(
   ctx: CanvasRenderingContext2D, b: Button, hover: boolean,
 ): void {
   const enabled = b.enabled !== false;
-  const base = !enabled ? "#5a4a36" : hover ? "#a9803c" : "#8a6432";
-  const light = !enabled ? "#6a5a44" : "#cda159";
-  const dark = "#3a2410";
+  const prim = b.primary && enabled;
+  const base = !enabled
+    ? "#5a4a36"
+    : prim
+      ? hover ? "#d8a64a" : "#c08a30"
+      : hover ? "#a9803c" : "#8a6432";
+  const light = !enabled ? "#6a5a44" : prim ? "#f2d488" : "#cda159";
+  const dark = prim ? "#5b3a10" : "#3a2410";
+  // scale the rounded corner + font to the button height for touch sizing
+  const rad = Math.min(10, b.h / 4);
+  roundRectPath(ctx, b.x, b.y, b.w, b.h, rad);
   ctx.fillStyle = dark;
-  ctx.fillRect(b.x, b.y, b.w, b.h);
+  ctx.fill();
+  roundRectPath(ctx, b.x + 2, b.y + 2, b.w - 4, b.h - 4, Math.max(2, rad - 2));
   ctx.fillStyle = base;
-  ctx.fillRect(b.x + 2, b.y + 2, b.w - 4, b.h - 4);
+  ctx.fill();
+  // top highlight strip
   ctx.fillStyle = light;
-  ctx.fillRect(b.x + 2, b.y + 2, b.w - 4, 2);
-  ctx.fillStyle = dark;
-  ctx.fillRect(b.x + 2, b.y + b.h - 4, b.w - 4, 2);
+  ctx.globalAlpha = 0.9;
+  ctx.fillRect(b.x + 4, b.y + 3, b.w - 8, 2);
+  ctx.globalAlpha = 1;
+  const fontPx = Math.round(Math.max(13, Math.min(20, b.h * 0.42)));
   ctx.fillStyle = enabled ? "#fff0c8" : "#9c8c70";
-  ctx.font = "bold 15px 'Trebuchet MS', sans-serif";
+  ctx.font = `bold ${fontPx}px 'Trebuchet MS', sans-serif`;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   ctx.fillText(b.label, b.x + b.w / 2, b.y + b.h / 2 + 1);
   ctx.textAlign = "left";
+  ctx.textBaseline = "alphabetic";
 }
 
 export function text(

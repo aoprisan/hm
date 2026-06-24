@@ -1,25 +1,39 @@
-// Bottom resource bar + date readout (HOMM2-style status strip).
+// Resource / date readout, drawn as a translucent overlay bar. Adapts to the
+// available width: on narrow (portrait) bars it shows only the core economy
+// resources (gold/wood/ore) plus the date; wider bars show the full set.
 import { GameState } from "../game/state";
-import { RESOURCE_ORDER } from "../data/resources";
+import { RESOURCE_ORDER, ResourceKind } from "../data/resources";
 import { resourceIcon } from "../art/sprites_ui";
-import { panel, text } from "./widgets";
+import { glass, text } from "./widgets";
 
 export const HUD_H = 44;
 
-export function drawHud(ctx: CanvasRenderingContext2D, state: GameState, vw: number, vh: number): void {
-  const y = vh - HUD_H;
-  panel(ctx, 0, y, vw, HUD_H);
-  let x = 16;
-  for (const k of RESOURCE_ORDER) {
+const CORE: ResourceKind[] = ["wood", "ore", "gold"];
+
+// Draw a resource bar inside the given rect. Returns nothing; purely visual.
+export function drawResourceBar(
+  ctx: CanvasRenderingContext2D, state: GameState, x: number, y: number, w: number, h: number,
+): void {
+  glass(ctx, x, y, w, h, 0, 0.62);
+  const cy = y + h / 2;
+  const compact = w < 560;
+  // Reserve room on the right for the date readout.
+  const dateStr = compact ? `D${state.dayOfWeek}/W${state.week}` : `Week ${state.week}, Day ${state.dayOfWeek}`;
+  ctx.font = "bold 15px 'Trebuchet MS'";
+  const dateW = ctx.measureText(dateStr).width + 16;
+
+  const kinds = compact ? CORE : RESOURCE_ORDER;
+  let cx = x + 12;
+  const maxX = x + w - dateW;
+  for (const k of kinds) {
     const icon = resourceIcon(k);
-    ctx.drawImage(icon, x, y + 12, icon.width, icon.height);
-    text(ctx, String(state.resources[k]), x + 24, y + 27, "#fff0c8", "bold 15px 'Trebuchet MS'");
-    x += k === "gold" ? 24 + ctx.measureText(String(state.resources[k])).width + 30 : 78;
+    const valStr = String(state.resources[k]);
+    ctx.font = "bold 15px 'Trebuchet MS'";
+    const slotW = icon.width + 6 + ctx.measureText(valStr).width + (k === "gold" ? 16 : 14);
+    if (cx + slotW > maxX) break; // ran out of room
+    ctx.drawImage(icon, cx, Math.round(cy - icon.height / 2));
+    text(ctx, valStr, cx + icon.width + 4, cy + 5, "#fff0c8", "bold 15px 'Trebuchet MS'");
+    cx += slotW;
   }
-  // date on the right
-  text(
-    ctx,
-    `Week ${state.week}, Day ${state.dayOfWeek}`,
-    vw - 16, y + 27, "#fff0c8", "bold 16px 'Trebuchet MS'", "right",
-  );
+  text(ctx, dateStr, x + w - 12, cy + 5, "#fff0c8", "bold 15px 'Trebuchet MS'", "right");
 }

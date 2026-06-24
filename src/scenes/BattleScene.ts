@@ -3,23 +3,26 @@
 // writes survivors back to the hero's army and reports the outcome.
 import type { App } from "../app";
 import { Scene } from "../engine/scene";
-import { Renderer, VW, VH } from "../engine/renderer";
+import { Renderer } from "../engine/renderer";
 import { Input } from "../engine/input";
 import { Sfx } from "../engine/audio";
 import { Battle, BattleUnit, BW, BH, aiDecide } from "../game/combat";
 import { CREATURES } from "../data/creatures";
 import { Stack } from "../game/army";
 import { creatureSprite } from "../art/sprites_creatures";
-import { Button, button, panel, parchment, pointInRect, text, textShadow } from "../ui/widgets";
+import { Button, button, glass, panel, parchment, pointInRect, text, textShadow, wrapText } from "../ui/widgets";
 
 export interface BattleOutcome {
   playerWon: boolean;
   enemyName: string;
 }
 
-const CELL = 58;
-const GX = Math.round((VW - BW * CELL) / 2);
-const GY = 78;
+interface BattleLayout {
+  vw: number; vh: number;
+  topH: number; ctrlH: number;
+  cell: number; gx: number; gy: number;
+  btnWait: Button; btnAuto: Button; btnFlee: Button;
+}
 
 interface Floater { x: number; y: number; text: string; color: string; t: number; }
 type Step =
@@ -39,10 +42,7 @@ export class BattleScene implements Scene {
   private stepDur = 0.25;
   private thinkTimer = 0;
   private resultText = "";
-
-  private btnWait: Button = { x: GX, y: GY + BH * CELL + 14, w: 120, h: 36, label: "Defend" };
-  private btnAuto: Button = { x: GX + 132, y: GY + BH * CELL + 14, w: 120, h: 36, label: "Auto Battle" };
-  private btnFlee: Button = { x: GX + 264, y: GY + BH * CELL + 14, w: 120, h: 36, label: "Flee" };
+  private lay!: BattleLayout;
 
   constructor(
     private app: App,
@@ -55,7 +55,29 @@ export class BattleScene implements Scene {
     const h = app.state.hero;
     this.battle = new Battle(h.army, h.attack, h.defense, enemyStacks, enemyAtk, enemyDef);
     for (const u of this.battle.units) this.rpos.set(u, { x: u.x, y: u.y });
+    this.lay = this.layout();
     this.beginTurn();
+  }
+
+  // Compute a responsive layout: top info bar, centered grid sized to fit, and
+  // a touch-friendly control bar along the bottom.
+  private layout(): BattleLayout {
+    const r = this.app.renderer;
+    const vw = r.vw, vh = r.vh;
+    const topH = Math.round(Math.min(72, Math.max(54, vh * 0.1)));
+    const ctrlH = Math.round(Math.min(76, Math.max(60, vh * 0.1)));
+    const pad = 8;
+    const gridH = vh - topH - ctrlH;
+    const cell = Math.max(20, Math.floor(Math.min((vw - pad * 2) / BW, (gridH - pad * 2) / BH)));
+    const gx = Math.round((vw - cell * BW) / 2);
+    const gy = Math.round(topH + (gridH - cell * BH) / 2);
+    const side = 12, gap = 10;
+    const bw = (vw - side * 2 - gap * 2) / 3;
+    const by = vh - ctrlH + (ctrlH - 46) / 2, bh = 46;
+    const btnWait: Button = { x: side, y: by, w: bw, h: bh, label: "Defend" };
+    const btnAuto: Button = { x: side + bw + gap, y: by, w: bw, h: bh, label: "Auto", primary: true };
+    const btnFlee: Button = { x: side + (bw + gap) * 2, y: by, w: bw, h: bh, label: "Flee" };
+    return { vw, vh, topH, ctrlH, cell, gx, gy, btnWait, btnAuto, btnFlee };
   }
 
   // ---------- turn flow ----------
@@ -124,6 +146,7 @@ export class BattleScene implements Scene {
 
   // ---------- input / actions ----------
   update(dt: number, input: Input): void {
+    this.lay = this.layout();
     // floaters
     for (const f of this.floaters) f.t += dt;
     this.floaters = this.floaters.filter((f) => f.t < 1);
@@ -176,9 +199,9 @@ export class BattleScene implements Scene {
     if (this.phase === "over") { Sfx.click(); this.onResult({ playerWon: this.battle.winner === "attacker", enemyName: this.enemyName }); return; }
     if (this.phase !== "player") return;
     // buttons
-    if (pointInRect(px, py, this.btnWait)) { Sfx.click(); this.endTurnAndAdvance(); return; }
-    if (pointInRect(px, py, this.btnAuto)) { Sfx.click(); this.autoBattle(); return; }
-    if (pointInRect(px, py, this.btnFlee)) { Sfx.click(); this.flee(); return; }
+    if (pointInRect(px, py, this.lay.btnWait)) { Sfx.click(); this.endTurnAndAdvance(); return; }
+    if (pointInRect(px, py, this.lay.btnAuto)) { Sfx.click(); this.autoBattle(); return; }
+    if (pointInRect(px, py, this.lay.btnFlee)) { Sfx.click(); this.flee(); return; }
 
     const cell = this.pointToCell(px, py);
     if (cell.x < 0) return;
@@ -281,11 +304,13 @@ export class BattleScene implements Scene {
 
   // ---------- geometry ----------
   private cellCenter(x: number, y: number): { x: number; y: number } {
-    return { x: GX + x * CELL + CELL / 2, y: GY + y * CELL + CELL / 2 };
+    const { gx, gy, cell } = this.lay;
+    return { x: gx + x * cell + cell / 2, y: gy + y * cell + cell / 2 };
   }
   private pointToCell(px: number, py: number): { x: number; y: number } {
-    const x = Math.floor((px - GX) / CELL);
-    const y = Math.floor((py - GY) / CELL);
+    const { gx, gy, cell } = this.lay;
+    const x = Math.floor((px - gx) / cell);
+    const y = Math.floor((py - gy) / cell);
     if (x < 0 || y < 0 || x >= BW || y >= BH) return { x: -1, y: -1 };
     return { x, y };
   }
@@ -293,13 +318,14 @@ export class BattleScene implements Scene {
   // ---------- drawing ----------
   draw(r: Renderer): void {
     const ctx = r.ctx;
+    this.lay = this.layout();
     // sky + field
-    const g = ctx.createLinearGradient(0, 0, 0, VH);
+    const g = ctx.createLinearGradient(0, 0, 0, r.vh);
     g.addColorStop(0, "#9fc88a");
     g.addColorStop(0.5, "#6fa84e");
     g.addColorStop(1, "#4f8a3a");
     ctx.fillStyle = g;
-    ctx.fillRect(0, 0, VW, VH);
+    ctx.fillRect(0, 0, r.vw, r.vh);
 
     this.drawGrid(ctx);
     if (this.phase === "player") this.drawReach(ctx);
@@ -311,58 +337,61 @@ export class BattleScene implements Scene {
     if (this.phase === "over") this.drawResult(ctx);
   }
 
-
   private drawGrid(ctx: CanvasRenderingContext2D): void {
+    const { gx, gy, cell } = this.lay;
     for (let y = 0; y < BH; y++) {
       for (let x = 0; x < BW; x++) {
-        const sx = GX + x * CELL, sy = GY + y * CELL;
+        const sx = gx + x * cell, sy = gy + y * cell;
         ctx.fillStyle = (x + y) % 2 ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.05)";
-        ctx.fillRect(sx, sy, CELL, CELL);
+        ctx.fillRect(sx, sy, cell, cell);
         ctx.strokeStyle = "rgba(40,30,12,0.18)";
         ctx.lineWidth = 1;
-        ctx.strokeRect(sx + 0.5, sy + 0.5, CELL, CELL);
+        ctx.strokeRect(sx + 0.5, sy + 0.5, cell, cell);
       }
     }
   }
 
   private drawReach(ctx: CanvasRenderingContext2D): void {
+    const { gx, gy, cell } = this.lay;
     ctx.fillStyle = "rgba(120,200,255,0.18)";
     for (const k of this.reach) {
       const x = k % BW, y = Math.floor(k / BW);
-      ctx.fillRect(GX + x * CELL + 2, GY + y * CELL + 2, CELL - 4, CELL - 4);
+      ctx.fillRect(gx + x * cell + 2, gy + y * cell + 2, cell - 4, cell - 4);
     }
   }
 
   private drawHoverAndActive(ctx: CanvasRenderingContext2D): void {
+    const { cell } = this.lay;
     const a = this.battle.active;
     if (a) {
       const c = this.cellCenter(a.x, a.y);
       ctx.strokeStyle = "#fff0a0";
       ctx.lineWidth = 3;
-      ctx.strokeRect(c.x - CELL / 2 + 2, c.y - CELL / 2 + 2, CELL - 4, CELL - 4);
+      ctx.strokeRect(c.x - cell / 2 + 2, c.y - cell / 2 + 2, cell - 4, cell - 4);
     }
     if (this.hover.x >= 0 && this.phase === "player") {
       const t = this.battle.unitAt(this.hover.x, this.hover.y);
       const c = this.cellCenter(this.hover.x, this.hover.y);
       ctx.strokeStyle = t && a && t.side !== a.side ? "#ff6a4a" : "#ffffff";
       ctx.lineWidth = 2;
-      ctx.strokeRect(c.x - CELL / 2 + 1, c.y - CELL / 2 + 1, CELL - 2, CELL - 2);
+      ctx.strokeRect(c.x - cell / 2 + 1, c.y - cell / 2 + 1, cell - 2, cell - 2);
     }
   }
 
   private drawUnits(ctx: CanvasRenderingContext2D): void {
+    const { gx, gy, cell } = this.lay;
     const order = [...this.battle.units].filter((u) => u.count > 0).sort((a, b) => a.y - b.y);
     for (const u of order) {
       const rp = this.rpos.get(u)!;
-      const cx = GX + rp.x * CELL + CELL / 2;
-      const bottom = GY + rp.y * CELL + CELL - 6;
+      const cx = gx + rp.x * cell + cell / 2;
+      const bottom = gy + rp.y * cell + cell - 6;
       // shadow
       ctx.fillStyle = "rgba(0,0,0,0.22)";
       ctx.beginPath();
-      ctx.ellipse(cx, bottom - 2, 16, 5, 0, 0, Math.PI * 2);
+      ctx.ellipse(cx, bottom - 2, cell * 0.28, cell * 0.09, 0, 0, Math.PI * 2);
       ctx.fill();
       const spr = creatureSprite(u.cid);
-      const scale = Math.max(2, Math.floor(Math.min((CELL - 8) / spr.w, (CELL - 8) / spr.h)));
+      const scale = Math.max(1, Math.floor(Math.min((cell - 8) / spr.w, (cell - 8) / spr.h)));
       if (u.side === "attacker") spr.drawCenteredBottom(ctx, cx, bottom, scale);
       else {
         ctx.save();
@@ -387,36 +416,40 @@ export class BattleScene implements Scene {
   }
 
   private drawTopBar(ctx: CanvasRenderingContext2D): void {
-    panel(ctx, 0, 0, VW, GY - 12);
+    const { vw, topH } = this.lay;
+    glass(ctx, 0, 0, vw, topH, 0, 0.66);
     const a = this.battle.active;
-    textShadow(ctx, `Battle — Round ${this.battle.round}`, 20, 30, "#fff0c8", "bold 18px 'Trebuchet MS'");
-    textShadow(ctx, `vs ${this.enemyName}`, 20, 52, "#e8c0a0", "14px 'Trebuchet MS'");
+    textShadow(ctx, `Round ${this.battle.round}`, 14, 24, "#fff0c8", "bold 17px 'Trebuchet MS'");
+    textShadow(ctx, `vs ${this.enemyName}`, 14, topH - 12, "#e8c0a0", "13px 'Trebuchet MS'");
     if (a) {
       const c = CREATURES[a.cid];
-      const who = a.side === "attacker" ? "Your turn:" : "Enemy:";
-      textShadow(ctx, `${who} ${c.name} (${a.count})  Spd ${a.speed}${a.ranged ? "  Shots " + a.shots : ""}`,
-        VW - 20, 38, a.side === "attacker" ? "#bfe89a" : "#e8a0a0", "bold 16px 'Trebuchet MS'", "right");
+      const who = a.side === "attacker" ? "Your move" : "Enemy";
+      const col = a.side === "attacker" ? "#bfe89a" : "#e8a0a0";
+      textShadow(ctx, `${who}: ${c.name}`, vw - 14, 24, col, "bold 16px 'Trebuchet MS'", "right");
+      textShadow(ctx, `×${a.count}  Spd ${a.speed}${a.ranged ? "  Shots " + a.shots : ""}`,
+        vw - 14, topH - 12, "#e8d6a4", "13px 'Trebuchet MS'", "right");
     }
   }
 
   private drawControls(ctx: CanvasRenderingContext2D): void {
+    const { vw, vh, ctrlH } = this.lay;
+    glass(ctx, 0, vh - ctrlH, vw, ctrlH, 0, 0.66);
     const enabled = this.phase === "player";
-    button(ctx, { ...this.btnWait, enabled }, false);
-    button(ctx, { ...this.btnAuto, enabled }, false);
-    button(ctx, { ...this.btnFlee, enabled }, false);
-    text(ctx, "Click a glowing tile to move, an enemy to attack. Ranged units shoot at range.",
-      GX + 400, GY + BH * CELL + 36, "#1c1208", "13px 'Trebuchet MS'");
+    button(ctx, { ...this.lay.btnWait, enabled }, false);
+    button(ctx, { ...this.lay.btnAuto, enabled }, false);
+    button(ctx, { ...this.lay.btnFlee, enabled }, false);
   }
 
   private drawResult(ctx: CanvasRenderingContext2D): void {
+    const { vw, vh } = this.lay;
     const won = this.battle.winner === "attacker";
-    ctx.fillStyle = "rgba(0,0,0,0.5)";
-    ctx.fillRect(0, 0, VW, VH);
-    const w = 460, h = 180, x = (VW - w) / 2, y = (VH - h) / 2;
+    ctx.fillStyle = "rgba(0,0,0,0.55)";
+    ctx.fillRect(0, 0, vw, vh);
+    const w = Math.min(420, vw - 32), h = 190, x = (vw - w) / 2, y = (vh - h) / 2;
     parchment(ctx, x, y, w, h);
-    textShadow(ctx, won ? "Victory!" : "Defeat", x + w / 2, y + 56, won ? "#3a7a1a" : "#9c2a1a", "bold 32px 'Trebuchet MS'", "center");
-    text(ctx, this.resultText, x + w / 2, y + 96, "#3a2410", "15px 'Trebuchet MS'", "center");
-    const b: Button = { x: x + w / 2 - 80, y: y + h - 54, w: 160, h: 40, label: "Continue" };
+    textShadow(ctx, won ? "Victory!" : "Defeat", x + w / 2, y + 52, won ? "#3a7a1a" : "#9c2a1a", "bold 32px 'Trebuchet MS'", "center");
+    wrapText(ctx, this.resultText, x + 24, y + 86, w - 48, 22, "#3a2410", "15px 'Trebuchet MS'");
+    const b: Button = { x: x + w / 2 - 90, y: y + h - 60, w: 180, h: 48, label: "Continue", primary: true };
     button(ctx, b, false);
   }
 }

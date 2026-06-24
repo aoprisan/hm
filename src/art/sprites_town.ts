@@ -19,9 +19,13 @@ function tri(c: CanvasRenderingContext2D, x1: number, y1: number, x2: number, y2
   c.moveTo(x1, y1); c.lineTo(x2, y2); c.lineTo(x3, y3); c.closePath(); c.fill();
 }
 
-let bg: HTMLCanvasElement | null = null;
+const bgCache = new Map<string, HTMLCanvasElement>();
 export function townBackground(w: number, h: number): HTMLCanvasElement {
-  if (bg) return bg;
+  w = Math.max(1, Math.round(w));
+  h = Math.max(1, Math.round(h));
+  const key = `${w}x${h}`;
+  const hit = bgCache.get(key);
+  if (hit) return hit;
   const { cv, c } = mk(w, h);
   // sky gradient
   const g = c.createLinearGradient(0, 0, 0, h * 0.6);
@@ -58,7 +62,7 @@ export function townBackground(w: number, h: number): HTMLCanvasElement {
   c.bezierCurveTo(w * 0.5 + 60, h * 0.72, w * 0.5 + 130, h * 0.85, w * 0.5 + 120, h);
   c.closePath();
   c.fill();
-  bg = cv;
+  bgCache.set(key, cv);
   return cv;
 }
 

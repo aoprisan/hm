@@ -30,10 +30,10 @@ export default defineConfig({
         short_name: "Realms",
         description:
           "A fairy-tale, turn-based strategy game inspired by Heroes of Might & Magic II.",
-        theme_color: "#5b3a1a",
-        background_color: "#1a120a",
+        theme_color: "#1a120a",
+        background_color: "#0c0a06",
         display: "fullscreen",
-        orientation: "landscape",
+        orientation: "any",
         start_url: "./",
         scope: "./",
         categories: ["games", "entertainment"],
