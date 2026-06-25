@@ -4,7 +4,7 @@
 import { CREATURES, CreatureId } from "../data/creatures";
 import { Stack } from "./army";
 import { rng } from "./rng";
-import { Spell } from "../data/spells";
+import { SPELLS, Spell, SpellId } from "../data/spells";
 
 export const BW = 12; // battle grid width
 export const BH = 9; // battle grid height
@@ -81,6 +81,11 @@ export class Battle {
   active: BattleUnit | null = null;
   winner: Side | null = null;
   castThisRound = false; // the hero may cast one spell per round
+  // The enemy commander's own spellbook: a mana pool scaled to its strength and
+  // a once-per-round cast, mirroring the player's hero.
+  enemyMana = 0;
+  enemyMaxMana = 0;
+  enemyCastThisRound = false;
   features = new Map<number, ObstacleKind>(); // terrain features as y*BW+x -> kind
 
   constructor(
@@ -93,6 +98,9 @@ export class Battle {
   ) {
     this.placeSide(attacker, "attacker", heroAtk, heroDef, 0, 1);
     this.placeSide(defender, "defender", enemyAtk, enemyDef, BW - 1, BW - 2);
+    // Weak guards get little/no mana; powerful foes (strongholds) get more.
+    this.enemyMaxMana = Math.min(12, Math.max(0, enemyAtk + 1));
+    this.enemyMana = this.enemyMaxMana;
     this.scatterFeatures();
     this.startRound();
   }
@@ -202,6 +210,7 @@ export class Battle {
 
   startRound(): void {
     this.castThisRound = false;
+    this.enemyCastThisRound = false;
     for (const u of this.units) {
       u.actedThisRound = false;
       u.retaliatedThisRound = false;
@@ -517,4 +526,38 @@ export function aiDecide(battle: Battle, u: BattleUnit): AiAction {
     return { kind: "move", to: { x: bestMoveCell % BW, y: Math.floor(bestMoveCell / BW) } };
   }
   return { kind: "wait" };
+}
+
+// --- Enemy commander's spell AI. The defender may cast one spell per round
+// from a small repertoire, paid from its mana pool (see Battle.enemyMana). ---
+export const ENEMY_SPELLS: SpellId[] = ["lightning", "bless", "haste"];
+
+export function aiCastDecision(battle: Battle): { spell: Spell; target: BattleUnit } | null {
+  if (battle.enemyCastThisRound) return null;
+  const affordable = ENEMY_SPELLS.map((id) => SPELLS[id]).filter((s) => s.cost <= battle.enemyMana);
+  if (affordable.length === 0) return null;
+
+  const foes = battle.alive("attacker"); // the player's stacks
+  const own = battle.alive("defender");
+  if (foes.length === 0 || own.length === 0) return null;
+
+  const strongestFoe = foes.reduce((a, b) => (threat(b) > threat(a) ? b : a));
+  const strongestOwn = own.reduce((a, b) => (threat(b) > threat(a) ? b : a));
+
+  // Prefer a damaging nuke on the player's most dangerous stack when it bites.
+  const lightning = affordable.find((s) => s.kind === "damage");
+  if (lightning) {
+    const pool = (strongestFoe.count - 1) * strongestFoe.maxHp + strongestFoe.hp;
+    if (lightning.power >= Math.min(pool, strongestFoe.maxHp)) {
+      return { spell: lightning, target: strongestFoe };
+    }
+  }
+  // Otherwise buff its own best stack (Bless preferred, then Haste).
+  const buff = affordable.find((s) => s.id === "bless") ?? affordable.find((s) => s.id === "haste");
+  if (buff) {
+    if (buff.id === "bless" && strongestOwn.blessed) return lightning ? { spell: lightning, target: strongestFoe } : null;
+    if (buff.id === "haste" && strongestOwn.hasteBonus > 0) return lightning ? { spell: lightning, target: strongestFoe } : null;
+    return { spell: buff, target: strongestOwn };
+  }
+  return lightning ? { spell: lightning, target: strongestFoe } : null;
 }

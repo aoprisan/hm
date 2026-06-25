@@ -8,10 +8,10 @@ import { Scene } from "../engine/scene";
 import { Renderer } from "../engine/renderer";
 import { Input } from "../engine/input";
 import { Sfx } from "../engine/audio";
-import { Battle, BattleUnit, BW, BH, aiDecide } from "../game/combat";
+import { Battle, BattleUnit, BW, BH, aiDecide, aiCastDecision } from "../game/combat";
 import { CREATURES } from "../data/creatures";
 import { SPELLS, SpellId, Spell } from "../data/spells";
-import { Stack } from "../game/army";
+import { Stack, Army, addToArmy } from "../game/army";
 import { creatureSprite } from "../art/sprites_creatures";
 import { Button, button, glass, panel, parchment, pointInRect, roundRectPath, text, textShadow, wrapText } from "../ui/widgets";
 
@@ -19,6 +19,9 @@ export interface BattleOutcome {
   playerWon: boolean;
   enemyName: string;
 }
+
+// Fraction of the enemy's slain that a Necropolis hero raises as Skeletons.
+const NECRO_RATE = 0.2;
 
 interface BattleLayout {
   vw: number; vh: number;
@@ -181,7 +184,23 @@ export class BattleScene implements Scene {
     this.resultText = won
       ? `Your forces are victorious over ${this.enemyName}!`
       : `Your army was crushed by ${this.enemyName}.`;
+    if (won) this.resultText += this.necromancy(army);
     this.phase = "over";
+  }
+
+  // Necropolis heroes raise a share of the enemy's slain as Skeletons. Returns
+  // a sentence to append to the result, or "" when nothing is raised.
+  private necromancy(army: Army): string {
+    if (this.app.state.town.faction !== "necropolis") return "";
+    let slain = 0;
+    for (const u of this.battle.units) {
+      if (u.side === "defender") slain += Math.max(0, u.startCount - u.count);
+    }
+    const raised = Math.floor(slain * NECRO_RATE);
+    if (raised <= 0) return "";
+    if (!addToArmy(army, "skeleton", raised)) return ""; // army full — no room
+    this.app.state.pushLog(`Necromancy raises ${raised} Skeletons from the fallen.`);
+    return `\nNecromancy raises ${raised} Skeletons!`;
   }
 
   // ---------- input / actions ----------
@@ -418,8 +437,33 @@ export class BattleScene implements Scene {
     return best;
   }
 
+  // The enemy commander may cast one spell per round before its stack acts.
+  // Returns true if the cast ended the battle.
+  private tryEnemyCast(): boolean {
+    const dec = aiCastDecision(this.battle);
+    if (!dec) return false;
+    const { spell, target } = dec;
+    const eff = this.battle.castSpell(spell, target);
+    this.battle.enemyMana -= spell.cost;
+    this.battle.enemyCastThisRound = true;
+    Sfx.cast();
+    this.flashBanner(`${this.enemyName} casts ${spell.name}`);
+    if (eff.damage) {
+      this.pushFloater(target, `-${eff.damage}`, "#c08aff");
+      if (eff.killed) this.pushFloater(target, `${eff.killed} slain`, "#ffd0a0", 18);
+    } else {
+      this.pushFloater(target, spell.name, "#9ad0ff");
+    }
+    return this.battle.checkWinner();
+  }
+
   private runEnemy(): void {
     const u = this.battle.active!;
+    if (this.tryEnemyCast()) {
+      for (const x of this.battle.units) { const rp = this.rpos.get(x)!; rp.x = x.x; rp.y = x.y; }
+      this.finish();
+      return;
+    }
     const action = aiDecide(this.battle, u);
     switch (action.kind) {
       case "shoot":
@@ -446,6 +490,7 @@ export class BattleScene implements Scene {
     while (!this.battle.winner && guard++ < 4000) {
       const u = this.battle.active;
       if (!u) break;
+      if (u.side === "defender" && this.tryEnemyCast()) break;
       const action = aiDecide(this.battle, u);
       if (action.kind === "shoot") this.battle.attack(u, action.target, true);
       else if (action.kind === "attack") {
@@ -833,7 +878,10 @@ export class BattleScene implements Scene {
     glass(ctx, 0, 0, vw, topH, 0, 0.66);
     const a = this.battle.active;
     textShadow(ctx, `Round ${this.battle.round}`, 14, 24, "#fff0c8", "bold 17px 'Trebuchet MS'");
-    textShadow(ctx, `vs ${this.enemyName}`, 14, topH - 12, "#e8c0a0", "13px 'Trebuchet MS'");
+    const vs = this.battle.enemyMaxMana > 0
+      ? `vs ${this.enemyName}   ✦ ${this.battle.enemyMana}`
+      : `vs ${this.enemyName}`;
+    textShadow(ctx, vs, 14, topH - 12, "#e8c0a0", "13px 'Trebuchet MS'");
     if (a) {
       const c = CREATURES[a.cid];
       const who = a.side === "attacker" ? "Your move" : "Enemy";
