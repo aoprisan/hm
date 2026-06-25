@@ -79,6 +79,10 @@ jobs:
 
   deploy:
     needs: build
+    # GitHub Pages deploys only from the default branch, so RPG-branch pushes
+    # run build-only (a CI check that the preview compiles). To publish updated
+    # preview content, run this workflow on main (push/merge or "Run workflow").
+    if: github.ref_name == 'main' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     environment:
       name: github-pages
