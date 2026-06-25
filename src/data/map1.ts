@@ -99,10 +99,18 @@ export function buildMap1(
   });
   for (const [dx, dy] of [[1, 0], [1, 1], [0, 1], [1, -1]]) clear(5 + dx, 20 + dy);
 
-  // signpost hint near the castle
+  // Elder Aldous by the castle gate — opens the chapter's quest chain.
+  place({ type: "npc", x: 7, y: 21, npcId: "elder", name: "Elder Aldous" });
+  // Mirelle the Seer keeps a vigil out along the eastern road.
+  place({ type: "npc", x: 16, y: 16, npcId: "sage", name: "Mirelle the Seer" });
+  // Garrick the Woodcutter, near the southern sawmill — flavor and a small gift.
+  place({ type: "npc", x: 8, y: 24, npcId: "woodcutter", name: "Garrick" });
+
+  // The old warding beacon on the northern rise — goal of the "Warding Beacon"
+  // quest (objective: reach 24,4). Drawn as a signpost / waymark.
   place({
-    type: "sign", x: 7, y: 21,
-    text: `The ${FACTIONS[enemyFaction].name} lord's keep lies northeast. Gather strength, brave hero!`,
+    type: "sign", x: 24, y: 4,
+    text: "A weathered watchtower. Its cold beacon flickers back to life at your touch.",
   });
 
   // mines (each guarded)
@@ -145,7 +153,7 @@ export function buildMap1(
     guard: guard([{ id: "ogre", count: 4 }, { id: "goblin", count: 6 }]), reward: { gold: 750, ore: 5 },
   });
   place({
-    type: "monster", x: 21, y: 16, owner: "neutral",
+    type: "monster", x: 21, y: 16, owner: "neutral", questId: "troll_menace",
     guard: guard([{ id: "troll", count: 3 }]), reward: { crystal: 3 },
   });
 
@@ -161,7 +169,7 @@ export function buildMap1(
   // from the enemy faction's top tiers.
   const eLine = FACTIONS[enemyFaction].lineup;
   const stronghold = place({
-    type: "stronghold", x: 30, y: 6, owner: "enemy",
+    type: "stronghold", x: 30, y: 6, owner: "enemy", questId: "dark_lord",
     name: `${FACTIONS[enemyFaction].townName} Keep`, faction: enemyFaction,
     guard: guard([
       { id: eLine[5], count: 1 },

@@ -15,7 +15,8 @@ export type ObjType =
   | "monster"
   | "tree"
   | "rock"
-  | "sign";
+  | "sign"
+  | "npc";
 
 export interface MapObject {
   id: number;
@@ -38,6 +39,8 @@ export interface MapObject {
   visited?: boolean;
   variant?: number; // decorative variation
   faction?: FactionId; // castle / stronghold castle type (drives its art tint)
+  npcId?: string; // links a placed NPC to its definition / dialogue (data/npcs)
+  questId?: string; // tags an object as a quest target (a slain stack, a goal)
 }
 
 export function tileKey(x: number, y: number): number {
@@ -102,7 +105,8 @@ export class GameMap {
       o.type === "castle" ||
       o.type === "stronghold" ||
       o.type === "mine" ||
-      o.type === "monster"
+      o.type === "monster" ||
+      o.type === "npc"
     );
   }
 

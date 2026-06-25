@@ -43,6 +43,7 @@ export class App {
     const hero = new Hero(f.heroName, startX, startY, startArmy, 2, 2);
     this.state = new GameState(map, hero, town);
     this.state.pushLog(`${f.heroName} sets out from ${town.name}.`);
+    this.state.pushLog("Speak with Elder Aldous by the castle gate.");
     this.save();
     this.scenes.replace(new AdventureScene(this));
   }

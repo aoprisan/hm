@@ -3,10 +3,12 @@ import { GameMap } from "./map";
 import { Fog } from "./fog";
 import { Hero } from "./hero";
 import { Army, emptyArmy } from "./army";
-import { ResourceBag, bag } from "../data/resources";
+import { ResourceBag, bag, addBag } from "../data/resources";
 import { BuildingId } from "../data/buildings";
 import { CreatureId } from "../data/creatures";
 import { FactionId, FACTIONS } from "../data/factions";
+import { QUESTS, CHAPTER1, QuestEvent, QuestReward } from "../data/quests";
+import { DialogueCondition } from "../data/dialogue";
 
 export interface TownState {
   name: string;
@@ -20,6 +22,14 @@ export interface TownState {
 }
 
 export type GamePhase = "playing" | "won" | "lost";
+
+// The player's story progress: which quests are in flight / done, generic story
+// flags set by dialogue, and the questIds of stacks already slain (so a chained
+// quest whose target is already dead can complete instead of softlocking).
+export interface QuestBook {
+  active: string[];
+  completed: string[];
+}
 
 // Themed names for the seven days of the game week (day 1..7).
 export const WEEKDAY_NAMES = [
@@ -35,6 +45,9 @@ export class GameState {
   town: TownState;
   phase: GamePhase = "playing";
   log: string[] = [];
+  quests: QuestBook = { active: [], completed: [] };
+  flags: Record<string, boolean> = {};
+  slain: string[] = []; // questIds of tagged stacks already defeated
 
   constructor(map: GameMap, hero: Hero, town: TownState) {
     this.map = map;
@@ -59,6 +72,74 @@ export class GameState {
   pushLog(msg: string): void {
     this.log.push(msg);
     if (this.log.length > 60) this.log.shift();
+  }
+
+  // ---------------- quests & story flags ----------------
+  isQuestActive(id: string): boolean { return this.quests.active.includes(id); }
+  isQuestComplete(id: string): boolean { return this.quests.completed.includes(id); }
+  isQuestAvailable(id: string): boolean {
+    return !this.isQuestActive(id) && !this.isQuestComplete(id);
+  }
+  hasFlag(flag: string): boolean { return !!this.flags[flag]; }
+  setFlag(flag: string, value = true): void { this.flags[flag] = value; }
+
+  startQuest(id: string): void {
+    if (!QUESTS[id] || !this.isQuestAvailable(id)) return;
+    this.quests.active.push(id);
+    this.pushLog(`New quest — ${QUESTS[id].title}.`);
+    // A chained quest whose target is already dead completes at once.
+    const obj = QUESTS[id].objective;
+    if (obj.kind === "slay" && this.slain.includes(obj.target)) this.completeQuest(id);
+  }
+
+  completeQuest(id: string): void {
+    const i = this.quests.active.indexOf(id);
+    if (i < 0) return;
+    this.quests.active.splice(i, 1);
+    this.quests.completed.push(id);
+    const q = QUESTS[id];
+    this.pushLog(`Quest complete — ${q.title}.`);
+    if (q.reward) this.grantReward(q.reward);
+    if (q.next) this.startQuest(q.next);
+    if (this.phase === "playing" && CHAPTER1.every((qq) => this.isQuestComplete(qq))) {
+      this.phase = "won";
+      this.pushLog("The shadow lifts. The Vale of Sunhaven is at peace!");
+    }
+  }
+
+  private grantReward(rw: QuestReward): void {
+    if (rw.gold) this.resources.gold += rw.gold;
+    if (rw.resources) addBag(this.resources, rw.resources);
+    if (rw.exp) this.hero.gainExp(rw.exp);
+    if (rw.flag) this.setFlag(rw.flag);
+  }
+
+  // Record a tagged stack's defeat and advance any quest waiting on it.
+  recordSlain(target: string): void {
+    if (!this.slain.includes(target)) this.slain.push(target);
+    this.checkQuestProgress({ kind: "slay", target });
+  }
+
+  // Match a gameplay event against every active quest's objective.
+  checkQuestProgress(ev: QuestEvent): void {
+    for (const id of [...this.quests.active]) {
+      const o = QUESTS[id]?.objective;
+      if (!o) continue;
+      if (ev.kind === "slay" && o.kind === "slay" && o.target === ev.target) this.completeQuest(id);
+      else if (ev.kind === "reach" && o.kind === "reach" && o.x === ev.x && o.y === ev.y) this.completeQuest(id);
+      else if (ev.kind === "talk" && o.kind === "talk" && o.npc === ev.npc) this.completeQuest(id);
+    }
+  }
+
+  // Evaluate a dialogue gate against current story state.
+  evalCondition(c: DialogueCondition): boolean {
+    switch (c.kind) {
+      case "questActive": return this.isQuestActive(c.quest);
+      case "questComplete": return this.isQuestComplete(c.quest);
+      case "questAvailable": return this.isQuestAvailable(c.quest);
+      case "flag": return this.hasFlag(c.flag) === (c.value ?? true);
+      case "hasArtifact": return false; // reserved for Phase 3
+    }
   }
 }
 

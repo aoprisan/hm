@@ -12,12 +12,16 @@ import { MapObject } from "../game/map";
 import { Stack, armyIsEmpty, armyPower } from "../game/army";
 import { addBag } from "../data/resources";
 import { CREATURES } from "../data/creatures";
+import { NpcDef, NPCS } from "../data/npcs";
+import { DialogueChoice, DialogueEffect } from "../data/dialogue";
+import { QUESTS } from "../data/quests";
 import { endTurn } from "../game/economy";
 import { TILE, terrainTileFor } from "../art/sprites_terrain";
 import {
   heroSprite, castleSprite, strongholdSprite, mineSprite, flagSprite,
   resourcePile, chestSprite, signSprite, bigTree, bigRock,
 } from "../art/sprites_objects";
+import { npcBody, npcPortrait } from "../art/sprites_portraits";
 import { creatureSprite } from "../art/sprites_creatures";
 import { drawResourceBar, HUD_H } from "../ui/hud";
 import { heroBadge } from "../ui/herobadge";
@@ -32,6 +36,8 @@ const TERRAIN_COLOR: Record<string, string> = {
 };
 
 interface Modal { title: string; body: string; onClose?: () => void; }
+
+interface DialogueView { npc: NpcDef; nodeId: string; }
 
 interface Layout {
   vw: number; vh: number; portrait: boolean;
@@ -55,7 +61,9 @@ export class AdventureScene implements Scene {
   private stepT = 0;
   private stepCost = 0;
   private modal: Modal | null = null;
+  private dialogue: DialogueView | null = null;
   private sheetOpen = false;
+  private sheetTab: "info" | "quests" = "info";
 
   constructor(private app: App) {}
 
@@ -147,7 +155,7 @@ export class AdventureScene implements Scene {
 
     // desktop hover preview (touch uses tap-to-preview instead)
     const p = input.pointer;
-    if (!this.moving && this.state.phase === "playing" && !this.sheetOpen && !this.modal
+    if (!this.moving && this.state.phase === "playing" && !this.sheetOpen && !this.modal && !this.dialogue
         && p.y > L.topH && p.y < L.vh - L.barH) {
       const t = this.screenToTile(L, p.x, p.y);
       if (t.x !== this.hoverTile.x || t.y !== this.hoverTile.y) {
@@ -161,7 +169,7 @@ export class AdventureScene implements Scene {
     for (const c of input.takeClicks()) this.handleClick(L, c.x, c.y, c.button);
     for (const k of input.takeKeys()) {
       if (k === "Enter" || k === " ") { if (!this.modal && !this.sheetOpen && this.state.phase === "playing") this.doEndTurn(); }
-      if (k === "Escape") { if (this.modal) this.modal = null; else if (this.sheetOpen) this.sheetOpen = false; else this.clearPending(); }
+      if (k === "Escape") { if (this.dialogue) this.dialogue = null; else if (this.modal) this.modal = null; else if (this.sheetOpen) this.sheetOpen = false; else this.clearPending(); }
     }
   }
 
@@ -183,6 +191,15 @@ export class AdventureScene implements Scene {
     Sfx.click();
     if (this.modal) { const m = this.modal; this.modal = null; m.onClose?.(); return; }
 
+    // dialogue overlay swallows all taps; only its choice buttons act
+    if (this.dialogue) {
+      const dl = this.dialogueLayout(L);
+      for (const c of dl.choices) {
+        if (pointInRect(px, py, c.rect)) { this.activateChoice(c.choice); return; }
+      }
+      return;
+    }
+
     if (this.state.phase !== "playing") {
       const b = this.endScreenButton(L);
       if (pointInRect(px, py, b)) this.app.toMenu();
@@ -194,10 +211,13 @@ export class AdventureScene implements Scene {
 
     // army / minimap sheet
     if (this.sheetOpen) {
-      if (py < L.sheetY) this.sheetOpen = false; // tapped the dimmed map above
-      // taps inside the sheet are consumed (close button handled here)
+      if (py < L.sheetY) { this.sheetOpen = false; return; } // tapped the dimmed map above
+      // taps inside the sheet are consumed (close + tab toggles handled here)
       const close = this.sheetCloseRect(L);
-      if (pointInRect(px, py, close)) this.sheetOpen = false;
+      if (pointInRect(px, py, close)) { this.sheetOpen = false; return; }
+      const sl = this.sheetLayout(L);
+      if (pointInRect(px, py, sl.tabInfo)) { this.sheetTab = "info"; return; }
+      if (pointInRect(px, py, sl.tabQuests)) { this.sheetTab = "quests"; return; }
       return;
     }
 
@@ -275,6 +295,10 @@ export class AdventureScene implements Scene {
       h.path.shift();
       this.state.fog.reveal(h.x, h.y, h.scouting);
       this.moving = false;
+      // standing on a tile can satisfy a "reach" quest objective
+      const prevPhase = this.state.phase;
+      this.state.checkQuestProgress({ kind: "reach", x: h.x, y: h.y });
+      this.notePhase(prevPhase);
       const stop = this.arriveAt(h.x, h.y, fromX, fromY);
       if (!stop && h.path.length && h.movePoints > 0) this.startNextStep();
       else { h.path = []; this.previewPath = null; }
@@ -308,6 +332,14 @@ export class AdventureScene implements Scene {
       case "sign":
         this.modal = { title: "Signpost", body: o.text ?? "" };
         return false;
+      case "npc": {
+        // step back off the NPC's tile so they keep standing there, then talk
+        this.state.hero.x = fromX; this.state.hero.y = fromY;
+        this.state.hero.fx = fromX; this.state.hero.fy = fromY;
+        const npc = o.npcId ? NPCS[o.npcId] : undefined;
+        if (npc) this.openDialogue(npc);
+        return true;
+      }
       case "mine":
         this.handleMine(o, fromX, fromY);
         return true;
@@ -352,6 +384,11 @@ export class AdventureScene implements Scene {
         if (o.reward) { addBag(this.state.resources, o.reward); }
         this.state.map.removeObject(o);
         this.state.pushLog("The enemy stack is vanquished.");
+        if (o.questId) {
+          const prev = this.state.phase;
+          this.state.recordSlain(o.questId);
+          this.notePhase(prev);
+        }
       } else this.handleLoss();
     });
   }
@@ -360,14 +397,76 @@ export class AdventureScene implements Scene {
     const keepName = o.name ?? "the enemy keep";
     this.fightThen(o.guard ?? [], o.name ?? "Stronghold", (won) => {
       if (won) {
-        this.state.phase = "won";
-        this.state.pushLog(`${keepName} has fallen! Victory!`);
-        Sfx.win();
+        this.state.pushLog(`${keepName} has fallen!`);
+        this.state.map.removeObject(o);
+        const prev = this.state.phase;
+        // A tagged keep advances the story; an untagged one is an outright win.
+        if (o.questId) this.state.recordSlain(o.questId);
+        else { this.state.phase = "won"; }
+        this.notePhase(prev);
       } else {
         this.state.hero.x = fromX; this.state.hero.y = fromY;
         this.handleLoss();
       }
     });
+  }
+
+  // ---------------- dialogue & quests ----------------
+  private notePhase(prev: string): void {
+    if (prev === this.state.phase) return;
+    if (this.state.phase === "won") Sfx.win();
+    else if (this.state.phase === "lost") Sfx.lose();
+    if (this.state.phase !== "playing") { this.dialogue = null; this.modal = null; }
+  }
+
+  private openDialogue(npc: NpcDef): void {
+    // choose the opening line: first entry whose condition holds (a default
+    // entry has no `requires` and should be listed last).
+    let nodeId = npc.entries[0]?.node ?? "";
+    for (const e of npc.entries) {
+      if (!e.requires || this.state.evalCondition(e.requires)) { nodeId = e.node; break; }
+    }
+    this.dialogue = { npc, nodeId };
+    this.clearPending();
+    this.app.save();
+  }
+
+  private applyEffect(e: DialogueEffect): void {
+    switch (e.kind) {
+      case "startQuest": this.state.startQuest(e.quest); break;
+      case "completeQuest": this.state.completeQuest(e.quest); break;
+      case "setFlag": this.state.setFlag(e.flag, e.value ?? true); break;
+      case "giveResource":
+        addBag(this.state.resources, { [e.resource]: e.amount });
+        Sfx.coin();
+        break;
+      case "giveExp": this.state.hero.gainExp(e.amount); break;
+    }
+  }
+
+  private activateChoice(choice: DialogueChoice): void {
+    const prev = this.state.phase;
+    for (const e of choice.effects ?? []) this.applyEffect(e);
+    this.notePhase(prev);
+    const npc = this.dialogue?.npc;
+    if (choice.next && npc && npc.nodes[choice.next]) {
+      this.dialogue = { npc, nodeId: choice.next };
+    } else {
+      this.dialogue = null;
+    }
+    this.app.save();
+  }
+
+  // Resolve the current node's visible choices (gated by `requires`); fall back
+  // to a single "Farewell" that closes the conversation.
+  private visibleChoices(): DialogueChoice[] {
+    const view = this.dialogue;
+    if (!view) return [];
+    const node = view.npc.nodes[view.nodeId];
+    const choices = (node?.choices ?? []).filter(
+      (c) => !c.requires || this.state.evalCondition(c.requires),
+    );
+    return choices.length ? choices : [{ label: "Farewell." }];
   }
 
   private fightThen(enemy: Stack[], name: string, cb: (won: boolean) => void): void {
@@ -416,6 +515,7 @@ export class AdventureScene implements Scene {
 
     if (this.sheetOpen) this.drawSheet(ctx, L);
     if (this.modal) this.drawModal(ctx, L);
+    if (this.dialogue) this.drawDialogue(ctx, L);
     if (this.state.phase !== "playing") this.drawEndScreen(ctx, L);
   }
 
@@ -475,6 +575,16 @@ export class AdventureScene implements Scene {
       case "resource": blit(resourcePile(o.resKind!)); break;
       case "chest": blit(chestSprite()); break;
       case "sign": blit(signSprite()); break;
+      case "npc": {
+        const kind = o.npcId ? NPCS[o.npcId]?.portrait : undefined;
+        blit(npcBody(kind ?? "villager"));
+        const mark = o.npcId ? this.npcMarker(o.npcId) : null;
+        if (mark) {
+          textShadow(ctx, mark, cx, bottom - 36,
+            mark === "!" ? "#f2d44a" : "#bfe89a", "bold 18px 'Trebuchet MS'", "center");
+        }
+        break;
+      }
       case "tree": blit(bigTree(o.variant ?? 0)); break;
       case "rock": blit(bigRock()); break;
       case "monster": {
@@ -619,20 +729,64 @@ export class AdventureScene implements Scene {
       }
     }
 
-    // minimap + log share the remaining space
-    const restY = ay + 70;
-    const restH = (L.vh) - restY - pad;
-    const mmSize = Math.max(60, Math.min(restH, L.portrait ? L.vw - pad * 2 - 0 : 200, 220));
-    this.drawMinimap(ctx, pad, restY, mmSize);
-    // recent log to the right of / below the minimap
-    const logX = pad + mmSize + 14;
-    if (logX < L.vw - 40) {
-      const lines = this.state.log.slice(-Math.max(3, Math.floor(restH / 18)));
-      let ly = restY + 14;
-      for (const line of lines) {
-        ly = wrapText(ctx, line, logX, ly, L.vw - logX - pad, 16, "#e8d6a4", "12px 'Trebuchet MS'");
-        ly += 2;
-        if (ly > L.vh - pad) break;
+    // tabbed lower area: "Map" (minimap + log) or "Quests"
+    const sl = this.sheetLayout(L);
+    button(ctx, { ...sl.tabInfo, label: "Map", primary: this.sheetTab === "info" }, false);
+    button(ctx, { ...sl.tabQuests, label: "Quests", primary: this.sheetTab === "quests" }, false);
+    const contentY = sl.contentY;
+    const restH = L.vh - contentY - pad;
+    if (this.sheetTab === "info") {
+      const mmSize = Math.max(60, Math.min(restH, L.portrait ? L.vw - pad * 2 : 200, 220));
+      this.drawMinimap(ctx, pad, contentY, mmSize);
+      // recent log to the right of / below the minimap
+      const logX = pad + mmSize + 14;
+      if (logX < L.vw - 40) {
+        const lines = this.state.log.slice(-Math.max(3, Math.floor(restH / 18)));
+        let ly = contentY + 14;
+        for (const line of lines) {
+          ly = wrapText(ctx, line, logX, ly, L.vw - logX - pad, 16, "#e8d6a4", "12px 'Trebuchet MS'");
+          ly += 2;
+          if (ly > L.vh - pad) break;
+        }
+      }
+    } else {
+      this.drawQuests(ctx, pad, contentY, L.vw - pad * 2, L.vh - pad);
+    }
+  }
+
+  private sheetLayout(L: Layout): { restY: number; contentY: number; tabInfo: Rect; tabQuests: Rect } {
+    const pad = 14;
+    const restY = L.sheetY + 138 + 70;
+    const tabInfo: Rect = { x: pad, y: restY, w: 96, h: 28 };
+    const tabQuests: Rect = { x: pad + 104, y: restY, w: 96, h: 28 };
+    return { restY, contentY: restY + 36, tabInfo, tabQuests };
+  }
+
+  private drawQuests(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, maxY: number): void {
+    let cy = y + 14;
+    text(ctx, "Active Quests", x, cy, "#fff0c8", "bold 14px 'Trebuchet MS'");
+    cy += 20;
+    if (!this.state.quests.active.length) {
+      cy = wrapText(ctx, "No active quests. Seek out the folk of the vale.", x, cy, w, 16, "#cbb78a", "italic 12px 'Trebuchet MS'");
+      cy += 4;
+    }
+    for (const id of this.state.quests.active) {
+      const q = QUESTS[id];
+      if (!q || cy > maxY - 20) continue;
+      textShadow(ctx, "• " + q.title, x, cy, "#f2d488", "bold 13px 'Trebuchet MS'");
+      cy += 17;
+      cy = wrapText(ctx, q.summary, x + 10, cy, w - 10, 15, "#e8d6a4", "12px 'Trebuchet MS'");
+      cy += 6;
+    }
+    if (this.state.quests.completed.length && cy < maxY - 20) {
+      cy += 4;
+      text(ctx, "Completed", x, cy, "#bfe89a", "bold 13px 'Trebuchet MS'");
+      cy += 17;
+      for (const id of this.state.quests.completed) {
+        const q = QUESTS[id];
+        if (!q || cy > maxY - 4) continue;
+        text(ctx, "✓ " + q.title, x + 6, cy, "#9fb88a", "12px 'Trebuchet MS'");
+        cy += 16;
       }
     }
   }
@@ -673,6 +827,57 @@ export class AdventureScene implements Scene {
     text(ctx, "(tap to continue)", x + w / 2, y + h - 18, "#7a5a30", "12px 'Trebuchet MS'", "center");
   }
 
+  // ----- dialogue overlay -----
+  private dialogueLayout(L: Layout): { x: number; y: number; w: number; h: number; choices: { rect: Rect; choice: DialogueChoice }[] } {
+    const choices = this.visibleChoices();
+    const w = Math.min(560, L.vw - 24);
+    const pad = 16, headerH = 68, textH = 100, btnH = 42, gap = 8;
+    const h = pad + headerH + 10 + textH + choices.length * (btnH + gap) + pad;
+    const x = (L.vw - w) / 2;
+    const y = L.vh - h - 12;
+    const choicesTop = y + pad + headerH + 10 + textH + 4;
+    const cr = choices.map((choice, i) => ({
+      rect: { x: x + pad, y: choicesTop + i * (btnH + gap), w: w - pad * 2, h: btnH } as Rect,
+      choice,
+    }));
+    return { x, y, w, h, choices: cr };
+  }
+
+  private drawDialogue(ctx: CanvasRenderingContext2D, L: Layout): void {
+    const view = this.dialogue!;
+    const node = view.npc.nodes[view.nodeId];
+    const dl = this.dialogueLayout(L);
+    const { x, y, w, h } = dl;
+    const pad = 16;
+    ctx.fillStyle = "rgba(0,0,0,0.55)";
+    ctx.fillRect(0, 0, L.vw, L.vh);
+    parchment(ctx, x, y, w, h);
+    // portrait bust
+    const por = npcPortrait(view.npc.portrait);
+    const scale = 2;
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(por, x + pad, y + pad, por.width * scale, por.height * scale);
+    textShadow(ctx, view.npc.name, x + pad + por.width * scale + 12, y + pad + 26, "#5b2a10", "bold 19px 'Trebuchet MS'");
+    // body line, below the portrait bust
+    wrapText(ctx, node?.text ?? "", x + pad, y + pad + 92, w - pad * 2, 22, "#3a2410", "16px 'Trebuchet MS'");
+    // choices
+    for (const c of dl.choices) {
+      const isAction = !!(c.choice.effects && c.choice.effects.length);
+      button(ctx, { ...c.rect, label: c.choice.label, primary: isAction }, false);
+    }
+  }
+
+  private npcMarker(npcId: string): "!" | "?" | null {
+    for (const id of Object.keys(QUESTS)) {
+      if (QUESTS[id].giver === npcId && this.state.isQuestAvailable(id)) return "!";
+    }
+    for (const id of this.state.quests.active) {
+      const o = QUESTS[id]?.objective;
+      if (o?.kind === "talk" && o.npc === npcId) return "?";
+    }
+    return null;
+  }
+
   private endScreenButton(L: Layout): Button {
     return { x: L.vw / 2 - 100, y: L.vh / 2 + 44, w: 200, h: 52, label: "New Quest", primary: true };
   }
@@ -685,8 +890,8 @@ export class AdventureScene implements Scene {
     textShadow(ctx, won ? "VICTORY!" : "DEFEAT", L.vw / 2, L.vh / 2 - 30,
       won ? "#f2e4a0" : "#e8a0a0", `bold ${titleSize}px 'Trebuchet MS'`, "center");
     const sub = won
-      ? `The enemy keep is yours. The realm of ${this.state.town.name} is safe!`
-      : "Your hero has fallen. The dark lord prevails...";
+      ? `Peace returns to the Vale of Sunhaven. The bards will sing of ${this.state.hero.name} for an age.`
+      : "Your hero has fallen. The shadow over Sunhaven deepens...";
     wrapText(ctx, sub, L.vw / 2 - Math.min(220, L.vw / 2 - 16), L.vh / 2 + 8,
       Math.min(440, L.vw - 32), 24, "#f2e4c0", "17px 'Trebuchet MS'");
     button(ctx, this.endScreenButton(L), false);

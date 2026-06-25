@@ -1,7 +1,7 @@
 // Save / load the full run to localStorage so it survives a page reload. The
 // map (terrain + objects) and fog are captured wholesale rather than
 // regenerated, so the restored world matches the saved one exactly.
-import { GameState, TownState } from "./state";
+import { GameState, TownState, QuestBook } from "./state";
 import { GameMap, MapObject } from "./map";
 import { Hero } from "./hero";
 import { Army } from "./army";
@@ -14,7 +14,8 @@ import { SpellId } from "../data/spells";
 
 const SAVE_KEY = "realms-of-valor-save";
 // Bump when the save shape changes incompatibly; older saves are then ignored.
-const SAVE_VERSION = 2;
+// v3 adds the quest book, story flags and slain-target list.
+const SAVE_VERSION = 3;
 
 interface HeroSave {
   name: string; x: number; y: number; fx: number; fy: number; facing: 1 | -1;
@@ -34,6 +35,9 @@ export interface SaveData {
   fog: number[];
   hero: HeroSave;
   town: TownSave;
+  quests: QuestBook;
+  flags: Record<string, boolean>;
+  slain: string[];
 }
 
 export function serialize(s: GameState): SaveData {
@@ -58,6 +62,9 @@ export function serialize(s: GameState): SaveData {
       builtToday: s.town.builtToday, built: [...s.town.built],
       available: { ...s.town.available }, garrison: s.town.garrison,
     },
+    quests: { active: s.quests.active.slice(), completed: s.quests.completed.slice() },
+    flags: { ...s.flags },
+    slain: s.slain.slice(),
   };
 }
 
@@ -87,6 +94,10 @@ export function deserialize(d: SaveData): GameState {
   state.log = d.log;
   state.resources = d.resources;
   state.fog.revealed.set(d.fog);
+  // Default defensively so a save missing these fields still loads cleanly.
+  state.quests = d.quests ?? { active: [], completed: [] };
+  state.flags = d.flags ?? {};
+  state.slain = d.slain ?? [];
   return state;
 }
 
