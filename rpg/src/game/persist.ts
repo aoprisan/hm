@@ -19,7 +19,8 @@ const SAVE_KEY =
   "realms-of-valor-save" + ((import.meta.env.VITE_SAVE_SUFFIX as string) ?? "");
 // Bump when the save shape changes incompatibly; older saves are then ignored.
 // v3 adds the quest book, story flags and slain-target list.
-const SAVE_VERSION = 3;
+// v4 adds the campaign level index (multi-realm campaign).
+const SAVE_VERSION = 4;
 
 interface HeroSave {
   name: string; x: number; y: number; fx: number; fy: number; facing: 1 | -1;
@@ -34,7 +35,7 @@ interface TownSave {
 }
 export interface SaveData {
   version: number;
-  day: number; phase: GameState["phase"]; log: string[]; resources: ResourceBag;
+  day: number; level: number; phase: GameState["phase"]; log: string[]; resources: ResourceBag;
   map: { width: number; height: number; tiles: TerrainKind[]; objects: MapObject[] };
   fog: number[];
   hero: HeroSave;
@@ -48,7 +49,7 @@ export function serialize(s: GameState): SaveData {
   const h = s.hero;
   return {
     version: SAVE_VERSION,
-    day: s.day, phase: s.phase, log: s.log.slice(), resources: { ...s.resources },
+    day: s.day, level: s.level, phase: s.phase, log: s.log.slice(), resources: { ...s.resources },
     map: {
       width: s.map.width, height: s.map.height,
       tiles: s.map.tiles.slice(), objects: s.map.objects,
@@ -92,7 +93,7 @@ export function deserialize(d: SaveData): GameState {
 
   // The constructor seeds default resources and reveals starting fog; we then
   // overwrite those with the saved values.
-  const state = new GameState(map, hero, town);
+  const state = new GameState(map, hero, town, d.level ?? 0);
   state.day = d.day;
   state.phase = d.phase;
   state.log = d.log;

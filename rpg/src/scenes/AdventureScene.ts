@@ -27,12 +27,14 @@ import { drawResourceBar, HUD_H } from "../ui/hud";
 import { heroBadge } from "../ui/herobadge";
 import {
   Button, button, glass, panel, parchment, pointInRect, roundRectPath,
-  text, textShadow, wrapText, Rect,
+  text, textShadow, wrapText, wrapLineCount, Rect,
 } from "../ui/widgets";
+import { CAMPAIGN } from "../data/levels";
 
 const TERRAIN_COLOR: Record<string, string> = {
   grass: "#4f8a3a", dirt: "#b3863f", sand: "#d8b06a", forest: "#2f5a22",
   water: "#2f6fb0", mountain: "#7d756a", rock: "#5f574c",
+  snow: "#dfe6ee", ice: "#a9d6e8", swamp: "#48533a", lava: "#d6431a", ash: "#4a4038",
 };
 
 interface Modal { title: string; body: string; onClose?: () => void; }
@@ -67,7 +69,14 @@ export class AdventureScene implements Scene {
 
   constructor(private app: App) {}
 
-  enter(): void { this.centerOnHero(true); }
+  enter(): void {
+    this.centerOnHero(true);
+    // Greet the player with the realm's intro once, as the chapter opens.
+    if (this.state.banner) {
+      this.modal = { title: "", body: this.state.banner };
+      this.state.banner = null;
+    }
+  }
 
   private get state() { return this.app.state; }
   private get r(): Renderer { return this.app.renderer; }
@@ -202,7 +211,11 @@ export class AdventureScene implements Scene {
 
     if (this.state.phase !== "playing") {
       const b = this.endScreenButton(L);
-      if (pointInRect(px, py, b)) this.app.toMenu();
+      // A cleared chapter advances to the next realm; a won/lost run returns to menu.
+      if (pointInRect(px, py, b)) {
+        if (this.state.phase === "cleared") this.app.advanceLevel();
+        else this.app.toMenu();
+      }
       return;
     }
 
@@ -414,7 +427,7 @@ export class AdventureScene implements Scene {
   // ---------------- dialogue & quests ----------------
   private notePhase(prev: string): void {
     if (prev === this.state.phase) return;
-    if (this.state.phase === "won") Sfx.win();
+    if (this.state.phase === "won" || this.state.phase === "cleared") Sfx.win();
     else if (this.state.phase === "lost") Sfx.lose();
     if (this.state.phase !== "playing") { this.dialogue = null; this.modal = null; }
   }
@@ -817,13 +830,16 @@ export class AdventureScene implements Scene {
   private drawModal(ctx: CanvasRenderingContext2D, L: Layout): void {
     const m = this.modal!;
     const w = Math.min(460, L.vw - 32);
-    const h = m.title ? 200 : 150;
+    // Size the panel to its text so long realm intros don't overflow the frame.
+    const bodyTop = m.title ? 70 : 50;
+    const lines = wrapLineCount(ctx, m.body, w - 48, "16px 'Trebuchet MS'");
+    const h = Math.min(L.vh - 24, bodyTop + lines * 24 + 40);
     const x = (L.vw - w) / 2, y = (L.vh - h) / 2;
     ctx.fillStyle = "rgba(0,0,0,0.5)";
     ctx.fillRect(0, 0, L.vw, L.vh);
     parchment(ctx, x, y, w, h);
     if (m.title) textShadow(ctx, m.title, x + w / 2, y + 36, "#5b2a10", "bold 22px 'Trebuchet MS'", "center");
-    wrapText(ctx, m.body, x + 24, y + (m.title ? 70 : 50), w - 48, 24, "#3a2410", "16px 'Trebuchet MS'");
+    wrapText(ctx, m.body, x + 24, y + bodyTop, w - 48, 24, "#3a2410", "16px 'Trebuchet MS'");
     text(ctx, "(tap to continue)", x + w / 2, y + h - 18, "#7a5a30", "12px 'Trebuchet MS'", "center");
   }
 
@@ -879,21 +895,28 @@ export class AdventureScene implements Scene {
   }
 
   private endScreenButton(L: Layout): Button {
-    return { x: L.vw / 2 - 100, y: L.vh / 2 + 44, w: 200, h: 52, label: "New Quest", primary: true };
+    const label = this.state.phase === "cleared" ? "Onward  →" : "New Quest";
+    return { x: L.vw / 2 - 100, y: L.vh / 2 + 44, w: 200, h: 52, label, primary: true };
   }
 
   private drawEndScreen(ctx: CanvasRenderingContext2D, L: Layout): void {
-    const won = this.state.phase === "won";
-    ctx.fillStyle = won ? "rgba(20,40,12,0.78)" : "rgba(40,12,12,0.78)";
+    const phase = this.state.phase;
+    const cleared = phase === "cleared";
+    const won = phase === "won";
+    const good = won || cleared;
+    ctx.fillStyle = good ? "rgba(20,40,12,0.82)" : "rgba(40,12,12,0.78)";
     ctx.fillRect(0, 0, L.vw, L.vh);
-    const titleSize = Math.round(Math.min(64, L.vw * 0.13));
-    textShadow(ctx, won ? "VICTORY!" : "DEFEAT", L.vw / 2, L.vh / 2 - 30,
-      won ? "#f2e4a0" : "#e8a0a0", `bold ${titleSize}px 'Trebuchet MS'`, "center");
-    const sub = won
-      ? `Peace returns to the Vale of Sunhaven. The bards will sing of ${this.state.hero.name} for an age.`
-      : "Your hero has fallen. The shadow over Sunhaven deepens...";
-    wrapText(ctx, sub, L.vw / 2 - Math.min(220, L.vw / 2 - 16), L.vh / 2 + 8,
-      Math.min(440, L.vw - 32), 24, "#f2e4c0", "17px 'Trebuchet MS'");
+    const def = CAMPAIGN[this.state.level];
+    const titleSize = Math.round(Math.min(cleared ? 46 : 64, L.vw * (cleared ? 0.1 : 0.13)));
+    const title = won ? "VICTORY!" : cleared ? "REALM CLEARED" : "DEFEAT";
+    textShadow(ctx, title, L.vw / 2, L.vh / 2 - 30,
+      good ? "#f2e4a0" : "#e8a0a0", `bold ${titleSize}px 'Trebuchet MS'`, "center");
+    let sub: string;
+    if (won) sub = `The Dark Lord is no more. Every realm wakes free of the shadow — the bards will sing of ${this.state.hero.name} for an age.`;
+    else if (cleared) sub = def?.outro ?? "This realm is won. The road leads on.";
+    else sub = "Your hero's army is destroyed. The shadow deepens — begin a new quest to try again.";
+    wrapText(ctx, sub, L.vw / 2 - Math.min(240, L.vw / 2 - 16), L.vh / 2 + 8,
+      Math.min(480, L.vw - 32), 24, "#f2e4c0", "17px 'Trebuchet MS'");
     button(ctx, this.endScreenButton(L), false);
   }
 }

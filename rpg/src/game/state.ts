@@ -7,7 +7,7 @@ import { ResourceBag, bag, addBag } from "../data/resources";
 import { BuildingId } from "../data/buildings";
 import { CreatureId } from "../data/creatures";
 import { FactionId, FACTIONS } from "../data/factions";
-import { QUESTS, CHAPTER1, QuestEvent, QuestReward } from "../data/quests";
+import { QUESTS, CHAPTERS, QuestEvent, QuestReward } from "../data/quests";
 import { DialogueCondition } from "../data/dialogue";
 
 export interface TownState {
@@ -21,7 +21,10 @@ export interface TownState {
   y: number;
 }
 
-export type GamePhase = "playing" | "won" | "lost";
+// "cleared" is a transient between-chapters state: the current realm is won but
+// the campaign continues — the scene shows an "Onward" screen that builds the
+// next realm. "won" is reserved for clearing the campaign's final realm.
+export type GamePhase = "playing" | "won" | "lost" | "cleared";
 
 // The player's story progress: which quests are in flight / done, generic story
 // flags set by dialogue, and the questIds of stacks already slain (so a chained
@@ -44,20 +47,29 @@ export class GameState {
   day = 1; // total days, 1-based
   town: TownState;
   phase: GamePhase = "playing";
+  level = 0; // index into the campaign (which realm/chapter we're in)
   log: string[] = [];
   quests: QuestBook = { active: [], completed: [] };
   flags: Record<string, boolean> = {};
   slain: string[] = []; // questIds of tagged stacks already defeated
+  // A one-shot intro line for the current realm, shown by the scene then cleared.
+  // Transient (not persisted) — it only greets the player as a realm opens.
+  banner: string | null = null;
 
-  constructor(map: GameMap, hero: Hero, town: TownState) {
+  constructor(map: GameMap, hero: Hero, town: TownState, level = 0) {
     this.map = map;
     this.hero = hero;
     this.town = town;
+    this.level = level;
     this.fog = new Fog(map.width, map.height);
     this.resources = bag({ gold: 3000, wood: 12, ore: 8 });
     this.fog.reveal(hero.x, hero.y, hero.scouting);
     this.fog.reveal(town.x, town.y, 3);
   }
+
+  // The quest spine of the realm the player is currently in.
+  get chapter(): string[] { return CHAPTERS[this.level] ?? []; }
+  get isFinalLevel(): boolean { return this.level >= CHAPTERS.length - 1; }
 
   get week(): number {
     return Math.floor((this.day - 1) / 7) + 1;
@@ -101,9 +113,17 @@ export class GameState {
     this.pushLog(`Quest complete — ${q.title}.`);
     if (q.reward) this.grantReward(q.reward);
     if (q.next) this.startQuest(q.next);
-    if (this.phase === "playing" && CHAPTER1.every((qq) => this.isQuestComplete(qq))) {
-      this.phase = "won";
-      this.pushLog("The shadow lifts. The Vale of Sunhaven is at peace!");
+    // Clearing every quest in the current chapter ends the realm: the final
+    // realm wins the campaign; any earlier one advances to the next.
+    if (this.phase === "playing" && this.chapter.length &&
+        this.chapter.every((qq) => this.isQuestComplete(qq))) {
+      if (this.isFinalLevel) {
+        this.phase = "won";
+        this.pushLog("The Obsidian Throne falls. The shadow is lifted from every realm!");
+      } else {
+        this.phase = "cleared";
+        this.pushLog("This realm is won. Press on — the road leads to a darker land.");
+      }
     }
   }
 

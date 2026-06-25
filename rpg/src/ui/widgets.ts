@@ -137,19 +137,44 @@ export function wrapText(
   ctx.fillStyle = color;
   ctx.font = font;
   ctx.textAlign = "left";
-  const words = str.split(" ");
-  let line = "";
   let cy = y;
-  for (const w of words) {
-    const test = line ? line + " " + w : w;
-    if (ctx.measureText(test).width > maxW && line) {
-      ctx.fillText(line, x, cy);
-      line = w;
-      cy += lineH;
-    } else {
-      line = test;
+  // Honour explicit newlines (so multi-paragraph text like realm intros lays
+  // out properly), word-wrapping each segment within maxW.
+  const paragraphs = str.split("\n");
+  for (let p = 0; p < paragraphs.length; p++) {
+    const words = paragraphs[p].split(" ");
+    let line = "";
+    for (const w of words) {
+      const test = line ? line + " " + w : w;
+      if (ctx.measureText(test).width > maxW && line) {
+        ctx.fillText(line, x, cy);
+        line = w;
+        cy += lineH;
+      } else {
+        line = test;
+      }
     }
+    ctx.fillText(line, x, cy);
+    cy += lineH;
   }
-  if (line) ctx.fillText(line, x, cy);
-  return cy + lineH;
+  return cy;
+}
+
+// How many lines `wrapText` would produce for `str` at width `maxW`. Lets a
+// container (e.g. a modal) size itself to its text before drawing the frame.
+export function wrapLineCount(
+  ctx: CanvasRenderingContext2D, str: string, maxW: number, font = "14px 'Trebuchet MS', sans-serif",
+): number {
+  ctx.font = font;
+  let count = 0;
+  for (const para of str.split("\n")) {
+    let line = "";
+    let n = 1;
+    for (const w of para.split(" ")) {
+      const test = line ? line + " " + w : w;
+      if (ctx.measureText(test).width > maxW && line) { n++; line = w; } else line = test;
+    }
+    count += n;
+  }
+  return count;
 }

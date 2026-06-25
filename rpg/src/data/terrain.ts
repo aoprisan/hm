@@ -7,7 +7,13 @@ export type TerrainKind =
   | "water"
   | "forest"
   | "mountain"
-  | "rock";
+  | "rock"
+  // expansion terrains used by the later campaign realms
+  | "snow"   // frozen north: passable but heavy going
+  | "ice"    // frozen lake / glacier road: slick but quick
+  | "swamp"  // fetid mire: very slow, saps movement
+  | "lava"   // molten rock: impassable
+  | "ash";   // scorched wasteland: cracked, dark, passable
 
 export interface TerrainDef {
   kind: TerrainKind;
@@ -24,4 +30,9 @@ export const TERRAIN: Record<TerrainKind, TerrainDef> = {
   water: { kind: "water", passable: false, moveCost: 0, name: "Water" },
   mountain: { kind: "mountain", passable: false, moveCost: 0, name: "Mountains" },
   rock: { kind: "rock", passable: false, moveCost: 0, name: "Rocks" },
+  snow: { kind: "snow", passable: true, moveCost: 150, name: "Snow" },
+  ice: { kind: "ice", passable: true, moveCost: 100, name: "Ice" },
+  swamp: { kind: "swamp", passable: true, moveCost: 200, name: "Swamp" },
+  lava: { kind: "lava", passable: false, moveCost: 0, name: "Lava" },
+  ash: { kind: "ash", passable: true, moveCost: 125, name: "Ashlands" },
 };
