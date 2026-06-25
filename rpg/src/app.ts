@@ -5,7 +5,9 @@ import { Renderer } from "./engine/renderer";
 import { Input } from "./engine/input";
 import { SceneManager } from "./engine/scene";
 import { GameState } from "./game/state";
-import { saveGame, loadSave, deserialize, clearSave } from "./game/persist";
+import {
+  deserialize, saveSlot, loadSlot, deleteSlot, listSaves, mostRecentSave, newSlotId,
+} from "./game/persist";
 import { Hero } from "./game/hero";
 import { Stack } from "./game/army";
 import { CAMPAIGN, levelEnemy } from "./data/levels";
@@ -23,6 +25,10 @@ export class App {
   input: Input;
   scenes = new SceneManager();
   state!: GameState;
+  // The slot the current run autosaves into, and its display name. New runs and
+  // loaded runs set these; autosave (save()) writes back to the same slot.
+  activeSlotId: string | null = null;
+  activeSlotName = "";
 
   constructor(renderer: Renderer, input: Input) {
     this.renderer = renderer;
@@ -34,7 +40,10 @@ export class App {
     this.scenes.replace(new MenuScene(this));
   }
 
-  newGame(factionId: FactionId): void {
+  // reuseSlot keeps the current run's slot (used by Restart, which is meant to
+  // overwrite the run in place); otherwise a fresh slot is created so a new
+  // quest never clobbers an existing save.
+  newGame(factionId: FactionId, reuseSlot = false): void {
     const def = CAMPAIGN[0];
     const enemyId = levelEnemy(0, factionId);
     const { map, castle, startX, startY } = def.build(factionId, enemyId);
@@ -46,6 +55,13 @@ export class App {
     this.state.banner = def.intro;
     this.state.pushLog(`${f.heroName} sets out from ${town.name}.`);
     this.state.pushLog("Speak with the elder by the castle gate.");
+    // Every new run gets its own slot, auto-named after the hero; the player can
+    // rename it from the in-game menu's Save Game button. Restart reuses the
+    // current slot so it overwrites the run rather than spawning a copy.
+    if (!(reuseSlot && this.activeSlotId)) {
+      this.activeSlotId = newSlotId();
+      this.activeSlotName = f.heroName;
+    }
     this.save();
     this.scenes.replace(new AdventureScene(this));
   }
@@ -83,22 +99,41 @@ export class App {
     this.scenes.replace(new AdventureScene(this));
   }
 
-  // Resume a saved run. Falls back to the menu if the save is missing/corrupt.
+  // Resume the most recently saved run. Falls back to the menu if none exists.
   continueGame(): void {
-    const d = loadSave();
+    const recent = mostRecentSave();
+    if (!recent) { this.toMenu(); return; }
+    this.loadGame(recent.id);
+  }
+
+  // Resume a specific slot chosen from the load list.
+  loadGame(id: string): void {
+    const d = loadSlot(id);
     if (!d) { this.toMenu(); return; }
+    this.activeSlotId = id;
+    this.activeSlotName = listSaves().find((m) => m.id === id)?.name ?? "Saved quest";
     this.state = deserialize(d);
     this.scenes.replace(new AdventureScene(this));
   }
 
-  // Persist the current run. A finished game clears the save so it isn't
-  // resumed; an in-progress one is written to localStorage.
+  // Rename the active slot (from the in-game Save Game prompt) and persist.
+  renameActiveSlot(name: string): void {
+    const trimmed = name.trim();
+    if (trimmed) this.activeSlotName = trimmed;
+    this.save();
+  }
+
+  // Persist the current run into its slot. A finished campaign deletes the slot
+  // so it isn't offered again; an in-progress (or between-chapters "cleared")
+  // run is written back, so a reload resumes exactly where it left off.
   save(): void {
-    if (!this.state) return;
-    // Persist in-progress runs and the between-chapters "cleared" pause (so a
-    // reload resumes at the Onward screen); a finished campaign clears the save.
-    if (this.state.phase === "playing" || this.state.phase === "cleared") saveGame(this.state);
-    else clearSave();
+    if (!this.state || !this.activeSlotId) return;
+    if (this.state.phase === "playing" || this.state.phase === "cleared") {
+      saveSlot(this.activeSlotId, this.activeSlotName, this.state);
+    } else {
+      deleteSlot(this.activeSlotId);
+      this.activeSlotId = null;
+    }
   }
 
   toAdventure(): void {
