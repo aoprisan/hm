@@ -44,10 +44,15 @@ interface DialogueView { npc: NpcDef; nodeId: string; }
 interface Layout {
   vw: number; vh: number; portrait: boolean;
   topH: number; barH: number; zoom: number;
-  btnArmy: Button; btnEnd: Button; btnCastle: Button;
+  btnMenu: Button; btnArmy: Button; btnEnd: Button; btnCastle: Button;
   march: Rect; cancel: Rect; // pending-move confirm pills
   sheetY: number;            // top of the army/minimap sheet
 }
+
+// Geometry of the in-game menu overlay (Save / Restart / New Quest).
+interface MenuLayout { x: number; y: number; w: number; h: number; save: Button; restart: Button; newQuest: Button; close: Rect; }
+// Geometry of the yes/no confirmation overlay used before destructive actions.
+interface ConfirmLayout { x: number; y: number; w: number; h: number; yes: Button; no: Button; }
 
 export class AdventureScene implements Scene {
   private camX = 0; // world px (tile = TILE)
@@ -66,6 +71,11 @@ export class AdventureScene implements Scene {
   private dialogue: DialogueView | null = null;
   private sheetOpen = false;
   private sheetTab: "info" | "quests" = "info";
+  private menuOpen = false;
+  // A pending yes/no confirmation for a destructive menu action.
+  private confirm: { msg: string; onYes: () => void } | null = null;
+  // A short self-dismissing status note (e.g. "Game saved").
+  private toast: { msg: string; t: number } | null = null;
 
   constructor(private app: App) {}
 
@@ -92,13 +102,19 @@ export class AdventureScene implements Scene {
 
     const side = 12, gap = 10;
     const bw = vw - side * 2;
-    const unit = (bw - gap * 2) / 3.5;
     const by = vh - barH + 8, bh = barH - 16;
+    // A square ☰ button on the left opens the in-game menu; the three play
+    // controls (Army / End Turn / Castle) share the remaining width.
+    const menuW = bh;
+    const restW = bw - menuW - gap;
+    const unit = (restW - gap * 2) / 3.5;
     const armyW = Math.round(unit), endW = Math.round(unit * 1.5);
-    const castleW = bw - armyW - endW - gap * 2;
-    const btnArmy: Button = { x: side, y: by, w: armyW, h: bh, label: "Army" };
-    const btnEnd: Button = { x: side + armyW + gap, y: by, w: endW, h: bh, label: "End Turn", primary: true };
-    const btnCastle: Button = { x: side + armyW + endW + gap * 2, y: by, w: castleW, h: bh, label: "Castle" };
+    const castleW = restW - armyW - endW - gap * 2;
+    let bx = side;
+    const btnMenu: Button = { x: bx, y: by, w: menuW, h: bh, label: "☰" }; bx += menuW + gap;
+    const btnArmy: Button = { x: bx, y: by, w: armyW, h: bh, label: "Army" }; bx += armyW + gap;
+    const btnEnd: Button = { x: bx, y: by, w: endW, h: bh, label: "End Turn", primary: true }; bx += endW + gap;
+    const btnCastle: Button = { x: bx, y: by, w: castleW, h: bh, label: "Castle" };
 
     const fabH = 46;
     const fabW = Math.min(220, vw - 120);
@@ -109,7 +125,34 @@ export class AdventureScene implements Scene {
     const cancel: Rect = { x: gx + fabW + 8, y: fy, w: fabH, h: fabH };
 
     const sheetY = Math.round(portrait ? vh * 0.40 : vh * 0.28);
-    return { vw, vh, portrait, topH, barH, zoom, btnArmy, btnEnd, btnCastle, march, cancel, sheetY };
+    return { vw, vh, portrait, topH, barH, zoom, btnMenu, btnArmy, btnEnd, btnCastle, march, cancel, sheetY };
+  }
+
+  // Centered parchment panel for the in-game menu.
+  private menuLayout(L: Layout): MenuLayout {
+    const w = Math.min(320, L.vw - 48);
+    const pad = 20, btnH = 52, gap = 12, titleH = 50;
+    const h = titleH + btnH * 3 + gap * 2 + pad + 16;
+    const x = (L.vw - w) / 2, y = (L.vh - h) / 2;
+    const bx = x + pad, bw = w - pad * 2;
+    let by = y + titleH;
+    const save: Button = { x: bx, y: by, w: bw, h: btnH, label: "Save Game", primary: true }; by += btnH + gap;
+    const restart: Button = { x: bx, y: by, w: bw, h: btnH, label: "Restart Quest" }; by += btnH + gap;
+    const newQuest: Button = { x: bx, y: by, w: bw, h: btnH, label: "New Quest" };
+    const close: Rect = { x: x + w - 42, y: y + 8, w: 32, h: 32 };
+    return { x, y, w, h, save, restart, newQuest, close };
+  }
+
+  // Centered yes/no confirmation for destructive menu actions.
+  private confirmLayout(L: Layout): ConfirmLayout {
+    const w = Math.min(360, L.vw - 32);
+    const h = 190;
+    const x = (L.vw - w) / 2, y = (L.vh - h) / 2;
+    const btnW = (w - 20 * 2 - 12) / 2, btnH = 46;
+    const by = y + h - btnH - 20;
+    const no: Button = { x: x + 20, y: by, w: btnW, h: btnH, label: "Cancel" };
+    const yes: Button = { x: x + 20 + btnW + 12, y: by, w: btnW, h: btnH, label: "Confirm", primary: true };
+    return { x, y, w, h, yes, no };
   }
 
   private visibleWorld(L: Layout): { w: number; h: number } {
@@ -152,11 +195,13 @@ export class AdventureScene implements Scene {
     const L = this.layout();
     this.waterAnim += dt;
     if (this.waterAnim > 0.35) { this.waterAnim = 0; this.waterFrame++; }
+    if (this.toast) { this.toast.t -= dt; if (this.toast.t <= 0) this.toast = null; }
 
+    const overlay = this.menuOpen || !!this.confirm;
     const pan = input.takePan();
     if (this.moving) {
       this.centerOnHero(false);
-    } else if (this.state.phase === "playing" && !this.sheetOpen && (pan.dx || pan.dy)) {
+    } else if (this.state.phase === "playing" && !this.sheetOpen && !overlay && (pan.dx || pan.dy)) {
       this.camX -= pan.dx / L.zoom;
       this.camY -= pan.dy / L.zoom;
       this.clampCam(L);
@@ -164,7 +209,7 @@ export class AdventureScene implements Scene {
 
     // desktop hover preview (touch uses tap-to-preview instead)
     const p = input.pointer;
-    if (!this.moving && this.state.phase === "playing" && !this.sheetOpen && !this.modal && !this.dialogue
+    if (!this.moving && this.state.phase === "playing" && !this.sheetOpen && !this.modal && !this.dialogue && !overlay
         && p.y > L.topH && p.y < L.vh - L.barH) {
       const t = this.screenToTile(L, p.x, p.y);
       if (t.x !== this.hoverTile.x || t.y !== this.hoverTile.y) {
@@ -177,8 +222,15 @@ export class AdventureScene implements Scene {
 
     for (const c of input.takeClicks()) this.handleClick(L, c.x, c.y, c.button);
     for (const k of input.takeKeys()) {
-      if (k === "Enter" || k === " ") { if (!this.modal && !this.sheetOpen && this.state.phase === "playing") this.doEndTurn(); }
-      if (k === "Escape") { if (this.dialogue) this.dialogue = null; else if (this.modal) this.modal = null; else if (this.sheetOpen) this.sheetOpen = false; else this.clearPending(); }
+      if (k === "Enter" || k === " ") { if (!this.modal && !this.sheetOpen && !overlay && this.state.phase === "playing") this.doEndTurn(); }
+      if (k === "Escape") {
+        if (this.confirm) this.confirm = null;
+        else if (this.menuOpen) this.menuOpen = false;
+        else if (this.dialogue) this.dialogue = null;
+        else if (this.modal) this.modal = null;
+        else if (this.sheetOpen) this.sheetOpen = false;
+        else this.clearPending();
+      }
     }
   }
 
@@ -199,6 +251,31 @@ export class AdventureScene implements Scene {
   private handleClick(L: Layout, px: number, py: number, btn: number): void {
     Sfx.click();
     if (this.modal) { const m = this.modal; this.modal = null; m.onClose?.(); return; }
+
+    // confirmation overlay (topmost): only Confirm/Cancel act, taps elsewhere cancel
+    if (this.confirm) {
+      const cl = this.confirmLayout(L);
+      if (pointInRect(px, py, cl.yes)) { const fn = this.confirm.onYes; this.confirm = null; this.menuOpen = false; fn(); return; }
+      this.confirm = null; // Cancel, ✕ or outside
+      return;
+    }
+
+    // in-game menu overlay: Save / Restart / New Quest, or tap outside to close
+    if (this.menuOpen) {
+      const ml = this.menuLayout(L);
+      if (pointInRect(px, py, ml.save)) { this.app.save(); this.menuOpen = false; this.showToast("Game saved"); return; }
+      if (pointInRect(px, py, ml.restart)) {
+        this.confirm = { msg: "Restart the campaign from the first realm with the same castle? All current progress will be lost.", onYes: () => this.app.newGame(this.state.town.faction) };
+        return;
+      }
+      if (pointInRect(px, py, ml.newQuest)) {
+        this.confirm = { msg: "Leave for the title screen to begin a new quest? This run stays saved — you can continue it later.", onYes: () => this.app.toMenu() };
+        return;
+      }
+      const inside = px >= ml.x && px <= ml.x + ml.w && py >= ml.y && py <= ml.y + ml.h;
+      if (pointInRect(px, py, ml.close) || !inside) this.menuOpen = false;
+      return;
+    }
 
     // dialogue overlay swallows all taps; only its choice buttons act
     if (this.dialogue) {
@@ -241,6 +318,7 @@ export class AdventureScene implements Scene {
     }
 
     // bottom action bar
+    if (pointInRect(px, py, L.btnMenu)) { this.menuOpen = true; this.clearPending(); return; }
     if (pointInRect(px, py, L.btnArmy)) { this.sheetOpen = true; return; }
     if (pointInRect(px, py, L.btnEnd)) { this.doEndTurn(); return; }
     if (pointInRect(px, py, L.btnCastle)) {
@@ -280,6 +358,8 @@ export class AdventureScene implements Scene {
   }
 
   private flash(msg: string): void { this.modal = { title: "", body: msg }; }
+
+  private showToast(msg: string): void { this.toast = { msg, t: 1.8 }; }
 
   // ----- movement stepping -----
   private startNextStep(): void {
@@ -530,6 +610,9 @@ export class AdventureScene implements Scene {
     if (this.modal) this.drawModal(ctx, L);
     if (this.dialogue) this.drawDialogue(ctx, L);
     if (this.state.phase !== "playing") this.drawEndScreen(ctx, L);
+    if (this.menuOpen) this.drawMenu(ctx, L);
+    if (this.confirm) this.drawConfirm(ctx, L);
+    if (this.toast) this.drawToast(ctx, L);
   }
 
   private drawMap(ctx: CanvasRenderingContext2D, L: Layout): void {
@@ -670,9 +753,11 @@ export class AdventureScene implements Scene {
   private drawActionBar(ctx: CanvasRenderingContext2D, L: Layout): void {
     glass(ctx, 0, L.vh - L.barH, L.vw, L.barH, 0, 0.66);
     const playing = this.state.phase === "playing";
+    L.btnMenu.enabled = playing;
     L.btnArmy.enabled = playing;
     L.btnEnd.enabled = playing;
     L.btnCastle.enabled = playing;
+    button(ctx, L.btnMenu, false);
     button(ctx, L.btnArmy, false);
     button(ctx, L.btnEnd, false);
     button(ctx, L.btnCastle, false);
@@ -841,6 +926,40 @@ export class AdventureScene implements Scene {
     if (m.title) textShadow(ctx, m.title, x + w / 2, y + 36, "#5b2a10", "bold 22px 'Trebuchet MS'", "center");
     wrapText(ctx, m.body, x + 24, y + bodyTop, w - 48, 24, "#3a2410", "16px 'Trebuchet MS'");
     text(ctx, "(tap to continue)", x + w / 2, y + h - 18, "#7a5a30", "12px 'Trebuchet MS'", "center");
+  }
+
+  // ----- in-game menu + confirmation -----
+  private drawMenu(ctx: CanvasRenderingContext2D, L: Layout): void {
+    const ml = this.menuLayout(L);
+    ctx.fillStyle = "rgba(0,0,0,0.5)";
+    ctx.fillRect(0, 0, L.vw, L.vh);
+    parchment(ctx, ml.x, ml.y, ml.w, ml.h);
+    textShadow(ctx, "Menu", ml.x + ml.w / 2, ml.y + 34, "#5b2a10", "bold 22px 'Trebuchet MS'", "center");
+    button(ctx, ml.save, false);
+    button(ctx, ml.restart, false);
+    button(ctx, ml.newQuest, false);
+    button(ctx, { ...ml.close, label: "✕" }, false);
+  }
+
+  private drawConfirm(ctx: CanvasRenderingContext2D, L: Layout): void {
+    const cl = this.confirmLayout(L);
+    ctx.fillStyle = "rgba(0,0,0,0.55)";
+    ctx.fillRect(0, 0, L.vw, L.vh);
+    parchment(ctx, cl.x, cl.y, cl.w, cl.h);
+    wrapText(ctx, this.confirm!.msg, cl.x + 24, cl.y + 40, cl.w - 48, 24, "#3a2410", "16px 'Trebuchet MS'");
+    button(ctx, cl.no, false);
+    button(ctx, cl.yes, false);
+  }
+
+  private drawToast(ctx: CanvasRenderingContext2D, L: Layout): void {
+    const msg = this.toast!.msg;
+    ctx.font = "13px 'Trebuchet MS'";
+    const w = Math.min(L.vw - 32, ctx.measureText(msg).width + 32);
+    const h = 32;
+    const x = (L.vw - w) / 2;
+    const y = L.vh - L.barH - h - 14;
+    glass(ctx, x, y, w, h, 8, 0.8);
+    text(ctx, msg, L.vw / 2, y + h / 2 + 4, "#fff0c8", "13px 'Trebuchet MS'", "center");
   }
 
   // ----- dialogue overlay -----
