@@ -65,9 +65,14 @@ stable game, so it can be play-tested without replacing it:
 - RPG preview — `https://<user>.github.io/<repo>/preview/`
 
 The preview runs from the same origin but uses an **isolated save**
-(`VITE_SAVE_SUFFIX`), so testing it never touches the live game's progress. Once
-the RPG work merges into `main`, drop the preview branch from the workflow's
-checkout/branches list.
+(`VITE_SAVE_SUFFIX`), so testing it never touches the live game's progress.
+
+GitHub Pages only deploys from the default branch, so the live site (both the
+stable game and `/preview/`) is published by **`main`** runs — each run rebuilds
+the RPG branch into `/preview/`. Pushing to the RPG branch runs a build-only CI
+check; to publish updated preview content, run the workflow on `main` (push, or
+**Actions → Run workflow**). Once the RPG work merges into `main`, drop the
+preview branch from the workflow's checkout/branches list.
 
 ## How to play
 
