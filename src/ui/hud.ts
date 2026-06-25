@@ -18,7 +18,9 @@ export function drawResourceBar(
   const cy = y + h / 2;
   const compact = w < 560;
   // Reserve room on the right for the date readout.
-  const dateStr = compact ? `D${state.dayOfWeek}/W${state.week}` : `Week ${state.week}, Day ${state.dayOfWeek}`;
+  const dateStr = compact
+    ? `${state.dayName.slice(0, 3)}·W${state.week}`
+    : `${state.dayName} · Week ${state.week}`;
   ctx.font = "bold 15px 'Trebuchet MS'";
   const dateW = ctx.measureText(dateStr).width + 16;
 

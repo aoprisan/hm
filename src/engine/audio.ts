@@ -35,6 +35,10 @@ export const Sfx = {
   coin: () => blip(880, 0.12, "sine", 0.05),
   hit: () => blip(160, 0.12, "sawtooth", 0.05),
   shoot: () => blip(720, 0.08, "square", 0.04),
+  cast: () => {
+    blip(880, 0.1, "sine", 0.04);
+    setTimeout(() => blip(1175, 0.16, "sine", 0.04), 70);
+  },
   win: () => {
     blip(523, 0.12, "triangle", 0.05);
     setTimeout(() => blip(659, 0.12, "triangle", 0.05), 120);

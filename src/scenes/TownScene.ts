@@ -11,12 +11,14 @@ import { BuildingId } from "../data/buildings";
 import { factionBuildings, factionOrder } from "../data/factions";
 import { CREATURES, CreatureId } from "../data/creatures";
 import { RESOURCE_ORDER, RESOURCE_LABEL, ResourceKind } from "../data/resources";
+import { SPELLS, GUILD_SPELLS } from "../data/spells";
 import { build, canBuild, recruit, maxAffordable, sellResource, SELL_RATE } from "../game/economy";
 import { Army, transferStack } from "../game/army";
 import { townBackground, buildingArt } from "../art/sprites_town";
 import { creatureSprite } from "../art/sprites_creatures";
 import { resourceIcon } from "../art/sprites_ui";
 import { drawResourceBar, HUD_H } from "../ui/hud";
+import { heroBadge } from "../ui/herobadge";
 import { Button, button, panel, parchment, pointInRect, text, textShadow, wrapText, Rect } from "../ui/widgets";
 
 const DESIGN_W = 1024;
@@ -26,6 +28,7 @@ type Modal =
   | { kind: "build"; id: BuildingId }
   | { kind: "recruit"; cid: CreatureId; qty: number }
   | { kind: "market" }
+  | { kind: "guild" }
   | { kind: "info"; title: string; body: string }
   | null;
 
@@ -130,13 +133,15 @@ export class TownScene implements Scene {
     if (!this.state.town.built.has(id)) { this.modal = { kind: "build", id }; return; }
     if (b.dwelling) { this.modal = { kind: "recruit", cid: b.dwelling, qty: 1 }; return; }
     if (b.enablesMarket) { this.modal = { kind: "market" }; return; }
+    if (id === "mageGuild") { this.modal = { kind: "guild" }; return; }
     this.modal = { kind: "info", title: b.name, body: b.desc };
   }
 
   // ---- modal geometry ----
   private modalBox(L: Layout): Rect {
     const w = Math.min(460, L.vw - 24);
-    const h = Math.min(L.vh - 24, this.modal?.kind === "market" ? 380 : 300);
+    const tall = this.modal?.kind === "market" || this.modal?.kind === "guild";
+    const h = Math.min(L.vh - 24, tall ? 380 : 300);
     return { x: (L.vw - w) / 2, y: (L.vh - h) / 2, w, h };
   }
 
@@ -151,7 +156,7 @@ export class TownScene implements Scene {
       const ok = canBuild(this.state, m.id).ok;
       const half = (w - 48) / 2;
       out.push({ rect: { x: x + 16, y: by, w: half, h: bh }, label: "Build", primary: true, enabled: ok, act: () => {
-        if (build(this.state, m.id)) { Sfx.build(); this.modal = null; } } });
+        if (build(this.state, m.id)) { Sfx.build(); this.app.save(); this.modal = null; } } });
       out.push({ rect: { x: x + 32 + half, y: by, w: half, h: bh }, label: "Cancel", act: () => (this.modal = null) });
     } else if (m.kind === "recruit") {
       const maxN = Math.min(this.state.town.available[m.cid] ?? 0, maxAffordable(this.state, m.cid));
@@ -162,13 +167,28 @@ export class TownScene implements Scene {
       const half = (w - 48) / 2;
       const target = this.heroHere ? this.state.hero.army : this.state.town.garrison;
       out.push({ rect: { x: x + 16, y: by, w: half, h: bh }, label: "Recruit", primary: true, enabled: maxN > 0, act: () => {
-        if (recruit(this.state, m.cid, m.qty, target)) { Sfx.coin(); this.modal = null; } } });
+        if (recruit(this.state, m.cid, m.qty, target)) { Sfx.coin(); this.app.save(); this.modal = null; } } });
       out.push({ rect: { x: x + 32 + half, y: by, w: half, h: bh }, label: "Close", act: () => (this.modal = null) });
     } else if (m.kind === "market") {
       RESOURCE_ORDER.filter((k) => k !== "gold").forEach((k, i) => {
         const ry = y + 70 + i * 38;
         out.push({ rect: { x: x + w - 188, y: ry - 20, w: 80, h: 32 }, label: "Sell 1", enabled: this.state.resources[k] >= 1, act: () => { sellResource(this.state, k, 1); Sfx.coin(); } });
         out.push({ rect: { x: x + w - 98, y: ry - 20, w: 84, h: 32 }, label: "Sell 5", enabled: this.state.resources[k] >= 5, act: () => { sellResource(this.state, k, 5); Sfx.coin(); } });
+      });
+      out.push({ rect: { x: x + w / 2 - 80, y: by, w: 160, h: bh }, label: "Close", primary: true, act: () => (this.modal = null) });
+    } else if (m.kind === "guild") {
+      const learned = this.state.hero.spells;
+      GUILD_SPELLS.forEach((sid, i) => {
+        const ry = y + 64 + i * 66;
+        const has = learned.includes(sid);
+        out.push({
+          rect: { x: x + w - 116, y: ry, w: 100, h: 40 },
+          label: has ? "Learned" : "Learn",
+          enabled: !has && this.heroHere,
+          act: () => {
+            if (!learned.includes(sid)) { learned.push(sid); Sfx.build(); this.app.save(); }
+          },
+        });
       });
       out.push({ rect: { x: x + w / 2 - 80, y: by, w: 160, h: bh }, label: "Close", primary: true, act: () => (this.modal = null) });
     } else if (m.kind === "info") {
@@ -287,6 +307,10 @@ export class TownScene implements Scene {
       text(ctx, "tap a stack, then a slot in the other row to move it",
         140, rowY + 22, "#b7a884", "11px 'Trebuchet MS'");
     }
+    if (side === "hero") {
+      const bx = 140, bw = Math.min(220, L.btnLeave.x - bx - 12);
+      if (bw > 80) heroBadge(ctx, this.state.hero, bx, rowY + 18, bw, { dark: true, bar: false });
+    }
     const army = this.armyFor(side);
     const slots = this.rowSlots(L, rowY);
     for (let i = 0; i < slots.length; i++) {
@@ -329,7 +353,7 @@ export class TownScene implements Scene {
     if (sel && sel.side !== side) {
       const from = this.armyFor(sel.side);
       const moving = from[sel.idx];
-      if (moving) transferStack(from, sel.idx, this.armyFor(side), moving.count);
+      if (moving) { transferStack(from, sel.idx, this.armyFor(side), moving.count); this.app.save(); }
       this.selected = null;
       return;
     }
@@ -349,6 +373,7 @@ export class TownScene implements Scene {
     if (m.kind === "build") this.drawBuildModal(ctx, box, m.id);
     else if (m.kind === "recruit") this.drawRecruitModal(ctx, box, m);
     else if (m.kind === "market") this.drawMarketModal(ctx, box);
+    else if (m.kind === "guild") this.drawGuildModal(ctx, box);
     else if (m.kind === "info") {
       textShadow(ctx, m.title, box.x + box.w / 2, box.y + 40, "#5b2a10", "bold 22px 'Trebuchet MS'", "center");
       wrapText(ctx, m.body, box.x + 24, box.y + 78, box.w - 48, 24, "#3a2410", "16px 'Trebuchet MS'");
@@ -396,6 +421,24 @@ export class TownScene implements Scene {
       text(ctx, RESOURCE_LABEL[k], x + 50, ry, "#3a2410", "14px 'Trebuchet MS'");
       text(ctx, `Have ${this.state.resources[k]}`, x + 140, ry, "#5b3a1a", "13px 'Trebuchet MS'");
       text(ctx, `${SELL_RATE[k]}g`, x + 250, ry, "#a8761f", "13px 'Trebuchet MS'");
+    });
+  }
+
+  private drawGuildModal(ctx: CanvasRenderingContext2D, box: Rect): void {
+    const { x, y, w } = box;
+    textShadow(ctx, "Mage Guild", box.x + box.w / 2, y + 38, "#5b2a10", "bold 22px 'Trebuchet MS'", "center");
+    if (!this.heroHere) {
+      text(ctx, "Bring your hero to the town to study spells.", x + 24, y + 60, "#9c3a2a", "12px 'Trebuchet MS'");
+    } else {
+      text(ctx, `Hero mana: ${this.state.hero.mana}/${this.state.hero.maxMana}`, x + 24, y + 60, "#5b3a1a", "bold 12px 'Trebuchet MS'");
+    }
+    GUILD_SPELLS.forEach((sid, i) => {
+      const sp = SPELLS[sid];
+      const ry = y + 64 + i * 66;
+      panel(ctx, x + 16, ry, w - 140, 56, "#d8c089", "#ece0b8", "#9c7c44");
+      textShadow(ctx, sp.name, x + 28, ry + 22, "#5b2a10", "bold 15px 'Trebuchet MS'");
+      text(ctx, `${sp.cost} mana`, x + w - 140 - 12, ry + 22, "#a8761f", "bold 12px 'Trebuchet MS'", "right");
+      wrapText(ctx, sp.desc, x + 28, ry + 40, w - 176, 16, "#3a2410", "12px 'Trebuchet MS'");
     });
   }
 

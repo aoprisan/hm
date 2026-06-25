@@ -14,12 +14,14 @@ import {
 } from "../ui/widgets";
 import { qrMatrix } from "../util/qrcode";
 import { shareUrl, genericShare } from "../util/share";
+import { hasSave } from "../game/persist";
 
 interface Layout {
   vw: number; vh: number;
   cols: number;
   cards: { id: FactionId; rect: Rect }[];
   start: Button;
+  cont?: Button; // "Continue Quest" — only when a saved run exists
   btnShare: Button;
   btnQr: Button;
 }
@@ -42,8 +44,10 @@ export class MenuScene implements Scene {
     const pad = 16;
     const titleH = Math.round(Math.min(120, Math.max(72, vh * 0.16)));
     const startH = 56;
+    const btnGap = 10;
+    const save = hasSave();
     const gridTop = titleH;
-    const gridBottom = vh - startH - pad * 2;
+    const gridBottom = vh - startH - (save ? startH + btnGap : 0) - pad * 2;
     const cols = vw >= 760 ? 4 : 2;
     const rows = Math.ceil(FACTION_ORDER.length / cols);
     const cellW = (vw - pad * (cols + 1)) / cols;
@@ -60,15 +64,22 @@ export class MenuScene implements Scene {
       };
     });
     const startW = Math.min(280, vw - pad * 2);
-    const start: Button = {
-      x: (vw - startW) / 2, y: vh - startH - pad, w: startW, h: startH,
-      label: "Start Quest", primary: true,
-    };
+    const startX = (vw - startW) / 2;
+    // With a saved run, Continue is the primary CTA at the bottom and New Quest
+    // sits above it; otherwise a single Start Quest button.
+    let start: Button;
+    let cont: Button | undefined;
+    if (save) {
+      cont = { x: startX, y: vh - startH - pad, w: startW, h: startH, label: "Continue Quest", primary: true };
+      start = { x: startX, y: vh - startH * 2 - btnGap - pad, w: startW, h: startH, label: "New Quest" };
+    } else {
+      start = { x: startX, y: vh - startH - pad, w: startW, h: startH, label: "Start Quest", primary: true };
+    }
     // Compact invite icons in the top-right corner (share sheet + QR code).
     const ib = 40, ig = 8;
     const btnShare: Button = { x: vw - pad - ib, y: pad, w: ib, h: ib, label: "⤴" };
     const btnQr: Button = { x: vw - pad - ib * 2 - ig, y: pad, w: ib, h: ib, label: "QR" };
-    return { vw, vh, cols, cards, start, btnShare, btnQr };
+    return { vw, vh, cols, cards, start, cont, btnShare, btnQr };
   }
 
   // Overlay geometry: a parchment panel holding the QR, the URL and a share button.
@@ -96,6 +107,7 @@ export class MenuScene implements Scene {
       }
       if (pointInRect(c.x, c.y, L.btnQr)) { this.openQr(); continue; }
       if (pointInRect(c.x, c.y, L.btnShare)) { this.doShare(); continue; }
+      if (L.cont && pointInRect(c.x, c.y, L.cont)) { this.app.continueGame(); return; }
       if (pointInRect(c.x, c.y, L.start)) { this.app.newGame(this.selected); return; }
       for (const card of L.cards) {
         if (pointInRect(c.x, c.y, card.rect)) { this.selected = card.id; break; }
@@ -146,6 +158,7 @@ export class MenuScene implements Scene {
     for (const card of L.cards) this.drawCard(ctx, card.id, card.rect);
 
     button(ctx, L.start, false);
+    if (L.cont) button(ctx, L.cont, false);
     button(ctx, L.btnQr, false);
     button(ctx, L.btnShare, false);
 
