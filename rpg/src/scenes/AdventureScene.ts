@@ -263,9 +263,9 @@ export class AdventureScene implements Scene {
     // in-game menu overlay: Save / Restart / New Quest, or tap outside to close
     if (this.menuOpen) {
       const ml = this.menuLayout(L);
-      if (pointInRect(px, py, ml.save)) { this.app.save(); this.menuOpen = false; this.showToast("Game saved"); return; }
+      if (pointInRect(px, py, ml.save)) { this.menuOpen = false; this.saveNamed(); return; }
       if (pointInRect(px, py, ml.restart)) {
-        this.confirm = { msg: "Restart the campaign from the first realm with the same castle? All current progress will be lost.", onYes: () => this.app.newGame(this.state.town.faction) };
+        this.confirm = { msg: "Restart the campaign from the first realm with the same castle? All current progress will be lost.", onYes: () => this.app.newGame(this.state.town.faction, true) };
         return;
       }
       if (pointInRect(px, py, ml.newQuest)) {
@@ -360,6 +360,18 @@ export class AdventureScene implements Scene {
   private flash(msg: string): void { this.modal = { title: "", body: msg }; }
 
   private showToast(msg: string): void { this.toast = { msg, t: 1.8 }; }
+
+  // Save Game: let the player (re)name this save slot, then persist. Cancelling
+  // the prompt keeps the existing name and still saves, so the button always
+  // commits the current run.
+  private saveNamed(): void {
+    const current = this.app.activeSlotName;
+    const entered = typeof window !== "undefined" && window.prompt
+      ? window.prompt("Name this save:", current)
+      : null;
+    this.app.renameActiveSlot(entered ?? current);
+    this.showToast(`Saved: ${this.app.activeSlotName}`);
+  }
 
   // ----- movement stepping -----
   private startNextStep(): void {
