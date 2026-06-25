@@ -1,13 +1,13 @@
 name: Deploy PWA to GitHub Pages
 
-# Builds two versions into one GitHub Pages site:
-#   - the stable game (main)        -> site root          (https://<user>.github.io/<repo>/)
-#   - the RPG test build (preview)  -> /preview/ subpath  (https://<user>.github.io/<repo>/preview/)
-# Because Pages serves a single artifact, every run rebuilds BOTH refs so the two
-# stay live together — pushing to either branch never clobbers the other.
+# Builds both games from this single branch into one GitHub Pages site:
+#   - a chooser landing page (root index.html) -> site root  (https://<user>.github.io/<repo>/)
+#   - the classic game (classic/)              -> /classic/  (.../classic/)
+#   - the RPG adventure (rpg/)                 -> /rpg/       (.../rpg/)
+# Both apps live in this repo, so no cross-branch checkout is needed.
 on:
   push:
-    branches: [main, claude/game-direction-rpg-o0mybq]
+    branches: [main]
   workflow_dispatch:
 
 # Allow the workflow to deploy to GitHub Pages.
@@ -27,17 +27,8 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout stable (main)
+      - name: Checkout
         uses: actions/checkout@v4
-        with:
-          ref: main
-          path: stable
-
-      - name: Checkout preview (RPG branch)
-        uses: actions/checkout@v4
-        with:
-          ref: claude/game-direction-rpg-o0mybq
-          path: preview
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -46,28 +37,30 @@ jobs:
           cache: npm
           cache-dependency-path: "**/package-lock.json"
 
-      - name: Build stable game (site root)
-        working-directory: stable
+      - name: Build classic game (/classic/)
+        working-directory: classic
         run: |
           npm ci
           npm run build
 
-      - name: Build RPG preview (/preview/)
-        working-directory: preview
+      - name: Build RPG adventure (/rpg/)
+        working-directory: rpg
         run: |
           npm ci
           npm run build
         env:
-          # Namespaces the localStorage save key so the preview never touches a
-          # real save (and tags the installed PWA name).
-          VITE_SAVE_SUFFIX: "-preview"
+          # Both games share one origin, so namespace the RPG save key so it never
+          # collides with the classic save. VITE_PWA_TAG distinguishes the installed
+          # PWA name/icon.
+          VITE_SAVE_SUFFIX: "-rpg"
+          VITE_PWA_TAG: " (RPG)"
 
       - name: Assemble combined site
         run: |
           mkdir -p site
-          cp -r stable/dist/. site/
-          mkdir -p site/preview
-          cp -r preview/dist/. site/preview/
+          cp index.html site/
+          mkdir -p site/classic && cp -r classic/dist/. site/classic/
+          mkdir -p site/rpg && cp -r rpg/dist/. site/rpg/
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
@@ -79,10 +72,6 @@ jobs:
 
   deploy:
     needs: build
-    # GitHub Pages deploys only from the default branch, so RPG-branch pushes
-    # run build-only (a CI check that the preview compiles). To publish updated
-    # preview content, run this workflow on main (push/merge or "Run workflow").
-    if: github.ref_name == 'main' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     environment:
       name: github-pages

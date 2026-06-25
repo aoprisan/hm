@@ -15,14 +15,26 @@ your Knight castle, fight tactical battles, and storm the Dragon's Keep.
 
 ![scope](https://img.shields.io/badge/scope-1%20castle%20%2B%201%20map-gold)
 
+## Repository layout
+
+This repo ships **two versions** of the game as self-contained apps that share
+one origin when deployed:
+
+- [`classic/`](classic/) — the original turn-based skirmish (the game described below).
+- [`rpg/`](rpg/) — a hero-centric **RPG** retelling (quests, NPCs, dialogue), in development.
+- [`index.html`](index.html) — a small chooser page served at the site root.
+
 ## Running
 
+Work inside whichever version you want — each is its own Vite project:
+
 ```bash
+cd classic        # or: cd rpg
 npm install
 npm run dev        # start the dev server, then open the printed URL
 ```
 
-Other scripts:
+Other scripts (run from inside `classic/` or `rpg/`):
 
 ```bash
 npm run build      # type-check + production bundle into dist/
@@ -46,33 +58,21 @@ to play. New builds update silently on the next visit.
 
 ## Deploy (GitHub Pages)
 
-Pushing to `main` builds the app and publishes `dist/` to **GitHub Pages** via
-[`.github/workflows/deploy.yml`](.github/workflows/deploy.yml). The build uses a
-relative `base` (`./`), so the PWA works under the project subpath
-(`https://<user>.github.io/<repo>/`) with no extra configuration.
+Pushing to `main` builds **both** versions and publishes them to one **GitHub
+Pages** site via [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml):
+
+- Chooser — `https://<user>.github.io/<repo>/`
+- Classic — `https://<user>.github.io/<repo>/classic/`
+- RPG — `https://<user>.github.io/<repo>/rpg/`
+
+Each app uses a relative `base` (`./`), so it works under its subpath with no
+extra configuration. Both run from the same origin, so the RPG build uses an
+**isolated save key** (`VITE_SAVE_SUFFIX=-rpg`) — playing one version never
+touches the other's progress — and a distinct installed-PWA name (`VITE_PWA_TAG`).
 
 One-time setup: in the repository's **Settings → Pages**, set **Source** to
 **GitHub Actions**. After that, every push to `main` deploys automatically (or
 trigger it manually from the **Actions** tab via *Run workflow*).
-
-### Preview build (RPG in development)
-
-The same workflow also builds the in-development RPG branch
-(`claude/game-direction-rpg-o0mybq`) to a **`/preview/` subpath** alongside the
-stable game, so it can be play-tested without replacing it:
-
-- Stable game — `https://<user>.github.io/<repo>/`
-- RPG preview — `https://<user>.github.io/<repo>/preview/`
-
-The preview runs from the same origin but uses an **isolated save**
-(`VITE_SAVE_SUFFIX`), so testing it never touches the live game's progress.
-
-GitHub Pages only deploys from the default branch, so the live site (both the
-stable game and `/preview/`) is published by **`main`** runs — each run rebuilds
-the RPG branch into `/preview/`. Pushing to the RPG branch runs a build-only CI
-check; to publish updated preview content, run the workflow on `main` (push, or
-**Actions → Run workflow**). Once the RPG work merges into `main`, drop the
-preview branch from the workflow's checkout/branches list.
 
 ## How to play
 
