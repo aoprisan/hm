@@ -12,7 +12,11 @@ import { CreatureId } from "../data/creatures";
 import { BuildingId } from "../data/buildings";
 import { SpellId } from "../data/spells";
 
-const SAVE_KEY = "realms-of-valor-save";
+// The preview deployment ships from the same origin as the live game, so it
+// would otherwise share this localStorage key. VITE_SAVE_SUFFIX (set only for
+// the /preview/ build) namespaces it so testing can never clobber a real save.
+const SAVE_KEY =
+  "realms-of-valor-save" + ((import.meta.env.VITE_SAVE_SUFFIX as string) ?? "");
 // Bump when the save shape changes incompatibly; older saves are then ignored.
 // v3 adds the quest book, story flags and slain-target list.
 const SAVE_VERSION = 3;

@@ -1,8 +1,13 @@
 name: Deploy PWA to GitHub Pages
 
+# Builds two versions into one GitHub Pages site:
+#   - the stable game (main)        -> site root          (https://<user>.github.io/<repo>/)
+#   - the RPG test build (preview)  -> /preview/ subpath  (https://<user>.github.io/<repo>/preview/)
+# Because Pages serves a single artifact, every run rebuilds BOTH refs so the two
+# stay live together — pushing to either branch never clobbers the other.
 on:
   push:
-    branches: [main]
+    branches: [main, claude/game-direction-rpg-o0mybq]
   workflow_dispatch:
 
 # Allow the workflow to deploy to GitHub Pages.
@@ -22,20 +27,47 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout stable (main)
         uses: actions/checkout@v4
+        with:
+          ref: main
+          path: stable
+
+      - name: Checkout preview (RPG branch)
+        uses: actions/checkout@v4
+        with:
+          ref: claude/game-direction-rpg-o0mybq
+          path: preview
 
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
+          cache-dependency-path: "**/package-lock.json"
 
-      - name: Install dependencies
-        run: npm ci
+      - name: Build stable game (site root)
+        working-directory: stable
+        run: |
+          npm ci
+          npm run build
 
-      - name: Build
-        run: npm run build
+      - name: Build RPG preview (/preview/)
+        working-directory: preview
+        run: |
+          npm ci
+          npm run build
+        env:
+          # Namespaces the localStorage save key so the preview never touches a
+          # real save (and tags the installed PWA name).
+          VITE_SAVE_SUFFIX: "-preview"
+
+      - name: Assemble combined site
+        run: |
+          mkdir -p site
+          cp -r stable/dist/. site/
+          mkdir -p site/preview
+          cp -r preview/dist/. site/preview/
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
@@ -43,7 +75,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: dist
+          path: site
 
   deploy:
     needs: build

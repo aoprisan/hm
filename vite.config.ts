@@ -1,6 +1,10 @@
 import { defineConfig } from "vite";
 import { VitePWA } from "vite-plugin-pwa";
 
+// The /preview/ deployment sets VITE_SAVE_SUFFIX; when present we also tag the
+// PWA name so an installed preview icon stays distinct from the live game.
+const previewTag = process.env.VITE_SAVE_SUFFIX ? " (Preview)" : "";
+
 export default defineConfig({
   base: "./",
   build: {
@@ -26,8 +30,8 @@ export default defineConfig({
         clientsClaim: true,
       },
       manifest: {
-        name: "Realms of Valor",
-        short_name: "Realms",
+        name: "Realms of Valor" + previewTag,
+        short_name: "Realms" + previewTag,
         description:
           "A fairy-tale, turn-based strategy game inspired by Heroes of Might & Magic II.",
         theme_color: "#1a120a",
