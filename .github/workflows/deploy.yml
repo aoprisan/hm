@@ -59,6 +59,9 @@ jobs:
         run: |
           mkdir -p site
           cp index.html site/
+          # Tombstone worker that retires the stale root-scoped service worker
+          # left over from the old single-app deploy (see sw.js).
+          cp sw.js site/
           mkdir -p site/classic && cp -r classic/dist/. site/classic/
           mkdir -p site/rpg && cp -r rpg/dist/. site/rpg/
 
