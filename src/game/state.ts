@@ -21,6 +21,11 @@ export interface TownState {
 
 export type GamePhase = "playing" | "won" | "lost";
 
+// Themed names for the seven days of the game week (day 1..7).
+export const WEEKDAY_NAMES = [
+  "Sunday", "Moonday", "Forgeday", "Wyrmday", "Thunderday", "Frostday", "Starday",
+];
+
 export class GameState {
   map: GameMap;
   fog: Fog;
@@ -46,6 +51,9 @@ export class GameState {
   }
   get dayOfWeek(): number {
     return ((this.day - 1) % 7) + 1;
+  }
+  get dayName(): string {
+    return WEEKDAY_NAMES[this.dayOfWeek - 1];
   }
 
   pushLog(msg: string): void {
