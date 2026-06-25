@@ -55,6 +55,20 @@ One-time setup: in the repository's **Settings → Pages**, set **Source** to
 **GitHub Actions**. After that, every push to `main` deploys automatically (or
 trigger it manually from the **Actions** tab via *Run workflow*).
 
+### Preview build (RPG in development)
+
+The same workflow also builds the in-development RPG branch
+(`claude/game-direction-rpg-o0mybq`) to a **`/preview/` subpath** alongside the
+stable game, so it can be play-tested without replacing it:
+
+- Stable game — `https://<user>.github.io/<repo>/`
+- RPG preview — `https://<user>.github.io/<repo>/preview/`
+
+The preview runs from the same origin but uses an **isolated save**
+(`VITE_SAVE_SUFFIX`), so testing it never touches the live game's progress. Once
+the RPG work merges into `main`, drop the preview branch from the workflow's
+checkout/branches list.
+
 ## How to play
 
 ### Adventure map
